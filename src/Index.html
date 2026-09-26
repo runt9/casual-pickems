@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1b1d22; --muted: #667085; --line: #e3e6eb;
+    --accent: #2f5bd3; --accent-text: #ffffff; --good: #1f7a3a; --bad: #b42318; --warn-bg: #fff4d6; --warn-text: #7a4b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --card: #1c1f24; --text: #e8eaed; --muted: #9aa3ad; --line: #2c3139;
+      --accent: #7aa2ff; --accent-text: #0b1020; --good: #5fd18a; --bad: #ff8a80; --warn-bg: #3a2f12; --warn-text: #f3cf7a;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 12px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .link { border: none; background: none; color: var(--accent); padding: 4px; }
+  .weeknav { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .weeknav select { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+  .banner { background: var(--warn-bg); color: var(--warn-text); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .info { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .totals { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+  .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; margin-bottom: 8px; gap: 8px; }
+  .teams { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .team { padding: 12px 8px; text-align: center; }
+  .team[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; min-height: 32px; }
+  .lock[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+  .muted { color: var(--muted); }
+  .win { color: var(--good); font-weight: 600; }
+  .loss { color: var(--bad); font-weight: 600; }
+  .toast { position: fixed; left: 16px; right: 16px; bottom: 16px; max-width: 608px; margin: 0 auto; background: var(--text); color: var(--bg); padding: 12px; border-radius: 8px; display: none; }
+  .namebox { display: flex; gap: 8px; margin-bottom: 12px; }
+  .namebox input { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1 id="title">Pick'em</h1>
+    <button class="link" id="rename" type="button">Change name</button>
+  </header>
+  <div id="namebox" class="namebox" hidden>
+    <input id="nameinput" maxlength="20" aria-label="Display name">
+    <button id="namesave" type="button">Save</button>
+  </div>
+  <div class="weeknav">
+    <button id="prev" type="button" aria-label="Previous week">&larr;</button>
+    <select id="weeksel" aria-label="Week"></select>
+    <button id="next" type="button" aria-label="Next week">&rarr;</button>
+  </div>
+  <div id="content"><p class="muted">Loading...</p></div>
+</main>
+<div id="toast" class="toast" role="status"></div>
+<script>
+const TOKEN = <?!= JSON.stringify(token) ?>;
+let S = null;       // last state from the server
+let skew = 0;       // server clock minus browser clock
+let busy = false;
+
+function call(fn, ...args) {
+  return new Promise((resolve, reject) =>
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn](...args));
+}
+
+function now() { return Date.now() + skew; }
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k !== null && k !== undefined && k !== false) e.append(k instanceof Node ? k : String(k));
+  return e;
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+function fmtTime(ms) {
+  if (ms === null || ms === undefined) return 'TBD';
+  return new Date(ms).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function fmtLeft(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m >= 48 * 60) return Math.round(m / 1440) + ' days';
+  if (m >= 120) return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  return m + ' min';
+}
+
+function fmtPts(x) { return (x > 0 ? '+' : '') + x; }
+
+function lineText(g) {
+  if (!g.line) return 'Line pending';
+  if (g.line.fav === null) return "Pick'em";
+  return (g.line.fav === 'home' ? g.home : g.away) + ' -' + Math.abs(g.line.spread);
+}
+
+function nameOf(id) {
+  if (id === S.me.id) return 'You';
+  const o = S.others.find(p => p.id === id);
+  return o ? o.name : id;
+}
+
+async function load(week) {
+  try {
+    apply(await call('apiGetState', TOKEN, week === undefined ? null : week));
+  } catch (err) {
+    document.getElementById('content').textContent = 'Could not load: ' + (err && err.message || err);
+  }
+}
+
+function apply(state) {
+  S = state;
+  skew = state.nowMs - Date.now();
+  render();
+}
+
+async function act(fn, ...args) {
+  if (busy) return;
+  busy = true;
+  render();
+  try {
+    apply(await call(fn, TOKEN, ...args));
+  } catch (err) {
+    toast(err && err.message || String(err));
+    await load(S && S.week);
+  } finally {
+    busy = false;
+    render();
+  }
+}
+
+function render() {
+  if (!S) return;
+  document.getElementById('title').textContent = "Pick'em: " + S.me.name;
+
+  const sel = document.getElementById('weeksel');
+  sel.replaceChildren(...S.weeks.map(w => el('option', { value: w.week, selected: w.week === S.week }, w.label)));
+  const idx = S.weeks.findIndex(w => w.week === S.week);
+  document.getElementById('prev').disabled = idx <= 0;
+  document.getElementById('next').disabled = idx < 0 || idx >= S.weeks.length - 1;
+
+  const t = now();
+  const anyOpen = S.games.some(g => !g.frozen && (g.freezeAtMs === null || t < g.freezeAtMs));
+  const kids = [];
+
+  if (S.locksAllowed && anyOpen && !S.myLock) {
+    kids.push(el('div', { class: 'banner' }, 'You have not set a lock this week. A lock doubles that pick, win or lose. It is optional.'));
+  }
+  kids.push(el('div', { class: 'info' },
+    S.multiplier > 1 ? 'Playoff round: all points x' + S.multiplier + ', no locks. ' : '',
+    'Lines and point values stay hidden until each game freezes, 1 hour before kickoff.'));
+
+  kids.push(el('div', { class: 'totals' },
+    S.totals.map(p => el('span', {}, nameOf(p.id) + ': ' + fmtPts(p.points))),
+    S.complete ? el('span', { class: 'muted' }, 'Final' + (S.winnerIds.length === 1 ? ', winner ' + nameOf(S.winnerIds[0]) : ', tie')) : null));
+
+  if (!S.games.length) kids.push(el('p', { class: 'muted' }, 'No games yet.'));
+  S.games.forEach(g => kids.push(g.frozen || (g.freezeAtMs !== null && t >= g.freezeAtMs) ? frozenCard(g) : openCard(g, t)));
+
+  document.getElementById('content').replaceChildren(...kids);
+}
+
+function openCard(g, t) {
+  const me = g.players.find(p => p.id === S.me.id);
+  const others = g.players.filter(p => p.id !== S.me.id);
+  const pickBtn = (side, label) => el('button', {
+    class: 'team', type: 'button', 'aria-pressed': me.side === side ? 'true' : 'false', disabled: busy,
+    onclick: () => act('apiSetPick', g.id, me.side === side ? null : side),
+  }, label);
+  const locked = S.myLock === g.id;
+  return el('div', { class: 'card' },
+    el('div', { class: 'meta' },
+      el('span', {}, fmtTime(g.kickoffMs)),
+      el('span', {}, g.freezeAtMs === null ? 'Kickoff TBD' : 'Closes in ' + fmtLeft(g.freezeAtMs - t))),
+    el('div', { class: 'teams' },
+      pickBtn('away', g.awayName + ' (' + g.away + ')'),
+      pickBtn('home', '@ ' + g.homeName + ' (' + g.home + ')')),
+    el('div', { class: 'actions' },
+      el('span', { class: 'muted' }, others.map(o => nameOf(o.id) + (o.hasPick ? ' has picked' : ' has not picked')).join(', ')),
+      S.locksAllowed && me.side ? el('button', {
+        class: 'lock', type: 'button', 'aria-pressed': locked ? 'true' : 'false', disabled: busy,
+        onclick: () => act('apiSetLock', S.week, locked ? null : g.id),
+      }, locked ? 'Locked' : 'Lock') : null));
+}
+
+function frozenCard(g) {
+  const v = g.line && g.line.values;
+  const rows = g.players.map(p => {
+    if (!p.visible) return el('div', { class: 'row' }, el('span', { class: 'muted' }, nameOf(p.id) + ': refreshing...'));
+    const team = p.side ? (p.side === 'home' ? g.home : g.away) : 'No pick';
+    const s = p.score;
+    let result = '';
+    let cls = 'muted';
+    if (s && s.points !== null && s.status !== 'nopick') { result = fmtPts(s.points); cls = s.status === 'win' ? 'win' : s.status === 'loss' ? 'loss' : 'muted'; }
+    if (s && s.status === 'pending') result = 'pending';
+    if (s && s.status === 'tie') result = 'tie, 0';
+    return el('div', { class: 'row' },
+      el('span', {}, nameOf(p.id) + ': ' + team + (p.locked ? ' (lock)' : '')),
+      el('span', { class: cls }, result));
+  });
+  const status = g.final ? g.away + ' ' + g.awayScore + ' - ' + g.homeScore + ' ' + g.home
+    : (now() >= g.kickoffMs ? 'In progress' : 'Frozen, kicks off ' + fmtTime(g.kickoffMs));
+  return el('div', { class: 'card' },
+    el('div', { class: 'meta' }, el('span', {}, g.awayName + ' @ ' + g.homeName), el('span', {}, status)),
+    el('div', { class: 'meta' },
+      el('span', {}, 'Line: ' + lineText(g)),
+      v ? el('span', {}, 'Fav ' + fmtPts(v.favWin) + '/' + fmtPts(v.favLoss) + ', Dog ' + fmtPts(v.dogWin) + '/' + fmtPts(v.dogLoss)) : null),
+    rows);
+}
+
+document.getElementById('weeksel').addEventListener('change', e => load(Number(e.target.value)));
+document.getElementById('prev').addEventListener('click', () => {
+  const i = S.weeks.findIndex(w => w.week === S.week); if (i > 0) load(S.weeks[i - 1].week);
+});
+document.getElementById('next').addEventListener('click', () => {
+  const i = S.weeks.findIndex(w => w.week === S.week); if (i < S.weeks.length - 1) load(S.weeks[i + 1].week);
+});
+document.getElementById('rename').addEventListener('click', () => {
+  const box = document.getElementById('namebox');
+  box.hidden = !box.hidden;
+  document.getElementById('nameinput').value = S ? S.me.name : '';
+});
+document.getElementById('namesave').addEventListener('click', async () => {
+  try {
+    await call('apiSetName', TOKEN, document.getElementById('nameinput').value);
+    document.getElementById('namebox').hidden = true;
+    await load(S && S.week);
+  } catch (err) { toast(err && err.message || String(err)); }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !busy) load(S && S.week); });
+setInterval(() => {                                          // countdowns and freeze transitions
+  if (busy || !S) return;
+  const t = now();
+  if (S.games.some(g => !g.frozen && g.freezeAtMs !== null && t >= g.freezeAtMs)) load(S.week);
+  else render();
+}, 30 * 1000);
+setInterval(() => { if (!busy && !document.hidden) load(S && S.week); }, 5 * 60 * 1000);
+load();
+</script>
+</body>
+</html>

@@ -18,7 +18,9 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 | `src/Render.js` | Standings tab and week tabs |
 | `src/WebApp.js` | `doGet` and the `api*` functions the pick page calls |
 | `src/Setup.js` | Owner-only: `setup`, `printLinks`, `resetP1Link`/`resetP2Link`, `syncNow` |
-| `src/Index.html` | Pick page |
+| `src/Index.html` | Pick page layout; pulls in the two files below with `include_()` |
+| `src/Styles.html` | Pick page CSS |
+| `src/Client.html` | Pick page JavaScript (runs in the browser; calls the `api*` functions) |
 | `test/` | Node tests with fake Google services (not deployed) |
 
 Security model: any top-level function without a trailing `_` is callable from the browser via
@@ -31,8 +33,8 @@ minute), and the Setup.js functions, which reject any caller who is not the owne
 2. In the sheet: **Extensions > Apps Script**.
 3. Add the code. Either:
    - **By hand:** delete `Code.gs`. For each `src/*.js` file, add a Script file with the same
-     name (the editor adds `.gs`) and paste the contents. Add an HTML file named `Index` and paste
-     `Index.html`. In **Project Settings**, tick "Show appsscript.json manifest file in editor",
+     name (the editor adds `.gs`) and paste the contents. Add HTML files named `Index`, `Styles` and
+     `Client` and paste the matching `.html` files. In **Project Settings**, tick "Show appsscript.json manifest file in editor",
      then replace `appsscript.json` with `src/appsscript.json`.
    - **With clasp:** enable the Apps Script API at https://script.google.com/home/usersettings,
      copy the Script ID from **Project Settings**, then:
@@ -102,6 +104,10 @@ moves after the freeze, late install, missing lines, kickoff changes); pick and 
 full Week 3 on real 2026 data; pick privacy on both the page and the sheet; a full 2025
 regular season + playoff replay checked against an independent calculation; owner-only
 guards; token validation; name sanitizing (including formula injection); fetch failure; and the
-sync throttle. `ui.js` renders the pick page in headless Chromium against the same fakes.
+sync throttle.
+
+`ui.js` (needs Playwright) assembles the pick page the way Apps Script does, renders it in headless
+Chromium against the same fakes, and checks picking, locking, clearing a pick, the no-lock banner,
+the other player's status, and the frozen view. Run it the same way: `node ui.js`.
 
 Get `games.csv` from https://github.com/nflverse/nfldata/blob/master/data/games.csv

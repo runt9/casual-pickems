@@ -1,0 +1,239 @@
+<!-- Pick page styles. Inlined into Index.html by include_('Styles') when the page is served. -->
+<style>
+  /* Color tokens. Dark mode overrides the same names below. */
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1b1d22;
+    --muted: #667085;
+    --line: #e3e6eb;
+    --accent: #2f5bd3;
+    --accent-text: #ffffff;
+    --good: #1f7a3a;
+    --bad: #b42318;
+    --warn-bg: #fff4d6;
+    --warn-text: #7a4b00;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417;
+      --card: #1c1f24;
+      --text: #e8eaed;
+      --muted: #9aa3ad;
+      --line: #2c3139;
+      --accent: #7aa2ff;
+      --accent-text: #0b1020;
+      --good: #5fd18a;
+      --bad: #ff8a80;
+      --warn-bg: #3a2f12;
+      --warn-text: #f3cf7a;
+    }
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Elements toggled with the hidden attribute must stay hidden even when a class sets display. */
+  [hidden] {
+    display: none !important;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.4 -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  button,
+  select,
+  input {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+    border: 1px solid var(--line);
+    background: var(--card);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .text-button {
+    border: none;
+    background: none;
+    color: var(--accent);
+    padding: 4px;
+  }
+
+  .muted {
+    color: var(--muted);
+  }
+
+  .win {
+    color: var(--good);
+    font-weight: 600;
+  }
+
+  .loss {
+    color: var(--bad);
+    font-weight: 600;
+  }
+
+  /* Header: title and the rename control */
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .page-header h1 {
+    font-size: 20px;
+    margin: 0;
+  }
+
+  .rename-form {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .rename-form input {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  /* Week picker */
+  .week-nav {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .week-nav select {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  /* Messages above the game list */
+  .no-lock-banner {
+    background: var(--warn-bg);
+    color: var(--warn-text);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+
+  .rules-note {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  .week-totals {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* Game cards */
+  .game-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+
+  .game-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+
+  .team-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .team-button {
+    padding: 12px 8px;
+    text-align: center;
+  }
+
+  .team-button[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-color: var(--accent);
+    font-weight: 600;
+  }
+
+  .game-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    min-height: 32px;
+  }
+
+  .lock-button[aria-pressed="true"] {
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .player-result {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+  }
+
+  /* Error pop-up */
+  .toast {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    max-width: 608px;
+    margin: 0 auto;
+    background: var(--text);
+    color: var(--bg);
+    padding: 12px;
+    border-radius: 8px;
+    display: none;
+  }
+
+  .toast.visible {
+    display: block;
+  }
+</style>

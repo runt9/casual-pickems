@@ -20,6 +20,16 @@ function doGet(e) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+/**
+ * Inlines another HTML file into a template (<?!= include_('Styles') ?>). Apps Script cannot
+ * serve separate .css/.js files, so the page's styles and script live in their own .html files
+ * and are pasted in when the page is generated. Scriptlets run on the server, so this private
+ * function is reachable from templates but not from google.script.run.
+ */
+function include_(fileName) {
+  return HtmlService.createHtmlOutputFromFile(fileName).getContent();
+}
+
 function playerByToken_(token) {
   if (typeof token !== 'string' || !/^[0-9a-f-]{36}$/.test(token)) return null;
   return loadPlayers_().filter(function (p) { return p.token === token; })[0] || null;

@@ -1,0 +1,400 @@
+<!--
+  Pick page behavior. Inlined into Index.html by include_('Client') when the page is served.
+
+  The page holds no rules of its own. Every action calls a server api* function, which
+  validates it and returns the full state for the week; the page re-renders from that.
+  Server functions are reached through google.script.run, which Apps Script injects.
+-->
+<script>
+  // --------------------------------------------------------------- constants
+
+  /** Must match the side values the server stores ('home' / 'away'). */
+  const Side = Object.freeze({ HOME: 'home', AWAY: 'away' });
+
+  /** Must match scorePick_ statuses in Scoring.js. */
+  const ScoreStatus = Object.freeze({ NO_PICK: 'nopick', PENDING: 'pending', TIE: 'tie', WIN: 'win', LOSS: 'loss' });
+
+  const REDRAW_INTERVAL_MS = 30 * 1000;       // countdowns, and noticing a game has frozen
+  const RELOAD_INTERVAL_MS = 5 * 60 * 1000;   // pick up the other player's changes and new results
+  const TOAST_DURATION_MS = 4000;
+
+  // --------------------------------------------------------------- page state
+
+  /** Last state returned by the server (see buildState_ in WebApp.js). */
+  let weekState = null;
+  /** Server clock minus browser clock, so countdowns use the server's time. */
+  let clockOffsetMs = 0;
+  /** True while a pick/lock request is running; buttons are disabled meanwhile. */
+  let requestInFlight = false;
+
+  // --------------------------------------------------------------- server and clock
+
+  /** Calls a public server function and resolves with its return value. */
+  function callServer(functionName, ...args) {
+    return new Promise((resolve, reject) => {
+      const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(reject);
+      runner[functionName](...args);
+    });
+  }
+
+  function serverNowMs() {
+    return Date.now() + clockOffsetMs;
+  }
+
+  /** Frozen per the server, or its freeze time has passed since the page last loaded. */
+  function isFrozenNow(game) {
+    if (game.frozen) return true;
+    if (game.freezeAtMs === null) return false;
+    return serverNowMs() >= game.freezeAtMs;
+  }
+
+  // --------------------------------------------------------------- formatting
+
+  /** "Sun, Sep 27, 12:00 PM" in the viewer's own timezone. */
+  function formatKickoff(epochMs) {
+    if (epochMs === null) return 'TBD';
+    const options = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+    return new Date(epochMs).toLocaleString(undefined, options);
+  }
+
+  /** "3 days", "5h 12m" or "40 min". */
+  function formatTimeLeft(durationMs) {
+    const totalMinutes = Math.max(0, Math.round(durationMs / 60000));
+    if (totalMinutes >= 48 * 60) return `${Math.round(totalMinutes / 1440)} days`;
+    if (totalMinutes >= 120) return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+    return `${totalMinutes} min`;
+  }
+
+  /** "+4.5", "-1", "0". */
+  function formatPoints(points) {
+    const sign = points > 0 ? '+' : '';
+    return `${sign}${points}`;
+  }
+
+  /** "KC -10", or "Pick'em", or "Line pending" before the snapshot exists. */
+  function formatLine(game) {
+    if (!game.line) return 'Line pending';
+    if (game.line.fav === null) return "Pick'em";
+    const favoriteCode = game.line.fav === Side.HOME ? game.home : game.away;
+    return `${favoriteCode} -${Math.abs(game.line.spread)}`;
+  }
+
+  /** "Fav +4.5/-1.5, Dog +6/-1". */
+  function formatPointValues(values) {
+    const favorite = `Fav ${formatPoints(values.favWin)}/${formatPoints(values.favLoss)}`;
+    const underdog = `Dog ${formatPoints(values.dogWin)}/${formatPoints(values.dogLoss)}`;
+    return `${favorite}, ${underdog}`;
+  }
+
+  /** "You" for the viewer, otherwise the other player's display name. */
+  function playerLabel(playerId) {
+    if (playerId === weekState.me.id) return 'You';
+    const other = weekState.others.find((player) => player.id === playerId);
+    return other ? other.name : playerId;
+  }
+
+  // --------------------------------------------------------------- DOM helper
+
+  /**
+   * createElement('button', { class: 'x', onclick: fn }, 'Label'). Children are appended as
+   * text nodes, never parsed as HTML, so names and team codes cannot inject markup.
+   */
+  function createElement(tag, attributes, ...children) {
+    const element = document.createElement(tag);
+    for (const [name, value] of Object.entries(attributes || {})) {
+      if (value === null || value === undefined || value === false) continue;
+      if (name === 'class') {
+        element.className = value;
+      } else if (name.startsWith('on')) {
+        element.addEventListener(name.slice(2), value);
+      } else {
+        element.setAttribute(name, value === true ? '' : value);
+      }
+    }
+    for (const child of children.flat()) {
+      if (child === null || child === undefined || child === false) continue;
+      element.append(child instanceof Node ? child : String(child));
+    }
+    return element;
+  }
+
+  function showToast(message) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.classList.add('visible');
+    clearTimeout(showToast.hideTimer);
+    showToast.hideTimer = setTimeout(() => toast.classList.remove('visible'), TOAST_DURATION_MS);
+  }
+
+  function errorMessage(error) {
+    return (error && error.message) || String(error);
+  }
+
+  // --------------------------------------------------------------- loading and actions
+
+  /** Loads a week (null = the server's default week) and renders it. */
+  async function loadWeek(week) {
+    try {
+      const state = await callServer('apiGetState', PLAYER_TOKEN, week);
+      applyState(state);
+    } catch (error) {
+      document.getElementById('week-content').textContent = `Could not load: ${errorMessage(error)}`;
+    }
+  }
+
+  function reloadCurrentWeek() {
+    return loadWeek(weekState ? weekState.week : null);
+  }
+
+  function applyState(state) {
+    weekState = state;
+    clockOffsetMs = state.nowMs - Date.now();
+    renderPage();
+  }
+
+  /** Runs a pick/lock action. On failure, shows why and reloads so the page matches the server. */
+  async function runAction(functionName, ...args) {
+    if (requestInFlight) return;
+    requestInFlight = true;
+    renderPage();
+    try {
+      const state = await callServer(functionName, PLAYER_TOKEN, ...args);
+      applyState(state);
+    } catch (error) {
+      showToast(errorMessage(error));
+      await reloadCurrentWeek();
+    } finally {
+      requestInFlight = false;
+      renderPage();
+    }
+  }
+
+  // --------------------------------------------------------------- rendering
+
+  function renderPage() {
+    if (!weekState) return;
+    document.getElementById('page-title').textContent = `Pick'em: ${weekState.me.name}`;
+    renderWeekPicker();
+    renderWeekContent();
+  }
+
+  function renderWeekPicker() {
+    const options = weekState.weeks.map((week) =>
+      createElement('option', { value: week.week, selected: week.week === weekState.week }, week.label));
+    document.getElementById('week-select').replaceChildren(...options);
+
+    const index = weekState.weeks.findIndex((week) => week.week === weekState.week);
+    const isFirst = index <= 0;
+    const isLast = index < 0 || index >= weekState.weeks.length - 1;
+    document.getElementById('previous-week').disabled = isFirst;
+    document.getElementById('next-week').disabled = isLast;
+  }
+
+  function renderWeekContent() {
+    const sections = [];
+    const noLockBanner = buildNoLockBanner();
+    if (noLockBanner) sections.push(noLockBanner);
+    sections.push(buildRulesNote());
+    sections.push(buildWeekTotals());
+
+    if (weekState.games.length === 0) {
+      sections.push(createElement('p', { class: 'muted' }, 'No games yet.'));
+    }
+    for (const game of weekState.games) {
+      const card = isFrozenNow(game) ? buildFrozenGameCard(game) : buildOpenGameCard(game);
+      sections.push(card);
+    }
+    document.getElementById('week-content').replaceChildren(...sections);
+  }
+
+  /** Shown while locks are allowed, a game is still open, and no lock is set. */
+  function buildNoLockBanner() {
+    if (!weekState.locksAllowed) return null;
+    if (weekState.myLock) return null;
+    const anyGameOpen = weekState.games.some((game) => !isFrozenNow(game));
+    if (!anyGameOpen) return null;
+    const message = 'You have not set a lock this week. A lock doubles that pick, win or lose. It is optional.';
+    return createElement('div', { class: 'no-lock-banner' }, message);
+  }
+
+  function buildRulesNote() {
+    const playoffNote = weekState.multiplier > 1 ? `Playoff round: all points x${weekState.multiplier}, no locks. ` : '';
+    const hiddenNote = 'Lines and point values stay hidden until each game freezes, 1 hour before kickoff.';
+    return createElement('div', { class: 'rules-note' }, playoffNote, hiddenNote);
+  }
+
+  /** "You: +12.5   Bunte: -3   Final, winner You" */
+  function buildWeekTotals() {
+    const totals = weekState.totals.map((total) =>
+      createElement('span', {}, `${playerLabel(total.id)}: ${formatPoints(total.points)}`));
+
+    let outcome = null;
+    if (weekState.complete) {
+      const hasSingleWinner = weekState.winnerIds.length === 1;
+      const winnerText = hasSingleWinner ? `winner ${playerLabel(weekState.winnerIds[0])}` : 'tie';
+      outcome = createElement('span', { class: 'muted' }, `Final, ${winnerText}`);
+    }
+    return createElement('div', { class: 'week-totals' }, totals, outcome);
+  }
+
+  /** Before freeze: two team buttons, the lock toggle, and whether the other player has picked. */
+  function buildOpenGameCard(game) {
+    const myPick = game.players.find((player) => player.id === weekState.me.id);
+    const otherPlayers = game.players.filter((player) => player.id !== weekState.me.id);
+
+    const teamButton = (side, label) => {
+      const isChosen = myPick.side === side;
+      const nextSide = isChosen ? null : side; // tapping the chosen team clears the pick
+      return createElement('button', {
+        class: 'team-button',
+        type: 'button',
+        'aria-pressed': String(isChosen),
+        disabled: requestInFlight,
+        onclick: () => runAction('apiSetPick', game.id, nextSide),
+      }, label);
+    };
+
+    const closesText = game.freezeAtMs === null
+      ? 'Kickoff TBD'
+      : `Closes in ${formatTimeLeft(game.freezeAtMs - serverNowMs())}`;
+    const otherStatus = otherPlayers
+      .map((player) => `${playerLabel(player.id)} ${player.hasPick ? 'has picked' : 'has not picked'}`)
+      .join(', ');
+
+    return createElement('div', { class: 'game-card' },
+      createElement('div', { class: 'game-meta' },
+        createElement('span', {}, formatKickoff(game.kickoffMs)),
+        createElement('span', {}, closesText)),
+      createElement('div', { class: 'team-buttons' },
+        teamButton(Side.AWAY, `${game.awayName} (${game.away})`),
+        teamButton(Side.HOME, `@ ${game.homeName} (${game.home})`)),
+      createElement('div', { class: 'game-actions' },
+        createElement('span', { class: 'muted' }, otherStatus),
+        buildLockButton(game, myPick)));
+  }
+
+  /** Lock toggle, shown only when locks are allowed and this game has a pick. */
+  function buildLockButton(game, myPick) {
+    if (!weekState.locksAllowed) return null;
+    if (!myPick.side) return null;
+    const isLocked = weekState.myLock === game.id;
+    const nextLockGameId = isLocked ? null : game.id;
+    return createElement('button', {
+      class: 'lock-button',
+      type: 'button',
+      'aria-pressed': String(isLocked),
+      disabled: requestInFlight,
+      onclick: () => runAction('apiSetLock', weekState.week, nextLockGameId),
+    }, isLocked ? 'Locked' : 'Lock');
+  }
+
+  /** After freeze: line, point values, both picks, and points once final. */
+  function buildFrozenGameCard(game) {
+    const statusText = frozenGameStatus(game);
+    const valuesText = game.line ? formatPointValues(game.line.values) : null;
+
+    return createElement('div', { class: 'game-card' },
+      createElement('div', { class: 'game-meta' },
+        createElement('span', {}, `${game.awayName} @ ${game.homeName}`),
+        createElement('span', {}, statusText)),
+      createElement('div', { class: 'game-meta' },
+        createElement('span', {}, `Line: ${formatLine(game)}`),
+        valuesText ? createElement('span', {}, valuesText) : null),
+      game.players.map((player) => buildPlayerResultRow(game, player)));
+  }
+
+  /** "ATL 35 - 14 GB", "In progress", or "Frozen, kicks off Sun, Sep 27, 12:00 PM". */
+  function frozenGameStatus(game) {
+    if (game.final) return `${game.away} ${game.awayScore} - ${game.homeScore} ${game.home}`;
+    if (serverNowMs() >= game.kickoffMs) return 'In progress';
+    return `Frozen, kicks off ${formatKickoff(game.kickoffMs)}`;
+  }
+
+  /** "You: BUF (lock)            +8" */
+  function buildPlayerResultRow(game, player) {
+    // The page noticed the freeze before the server returned the other player's pick.
+    if (!player.visible) {
+      return createElement('div', { class: 'player-result' },
+        createElement('span', { class: 'muted' }, `${playerLabel(player.id)}: refreshing...`));
+    }
+
+    const pickedTeam = player.side === Side.HOME ? game.home : game.away;
+    const pickText = player.side ? pickedTeam : 'No pick';
+    const lockText = player.locked ? ' (lock)' : '';
+    const { text: resultText, cssClass } = describeScore(player.score);
+
+    return createElement('div', { class: 'player-result' },
+      createElement('span', {}, `${playerLabel(player.id)}: ${pickText}${lockText}`),
+      createElement('span', { class: cssClass }, resultText));
+  }
+
+  /** Text and color for a scored pick: "+8" (win), "-2" (loss), "pending", "tie, 0", or blank. */
+  function describeScore(score) {
+    if (!score) return { text: '', cssClass: 'muted' };
+    switch (score.status) {
+      case ScoreStatus.WIN: return { text: formatPoints(score.points), cssClass: 'win' };
+      case ScoreStatus.LOSS: return { text: formatPoints(score.points), cssClass: 'loss' };
+      case ScoreStatus.TIE: return { text: 'tie, 0', cssClass: 'muted' };
+      case ScoreStatus.PENDING: return { text: 'pending', cssClass: 'muted' };
+      case ScoreStatus.NO_PICK: return { text: '', cssClass: 'muted' };
+      default: throw new Error(`Unknown score status: ${score.status}`);
+    }
+  }
+
+  // --------------------------------------------------------------- events and timers
+
+  function stepWeek(direction) {
+    const index = weekState.weeks.findIndex((week) => week.week === weekState.week);
+    const target = weekState.weeks[index + direction];
+    if (target) loadWeek(target.week);
+  }
+
+  document.getElementById('week-select').addEventListener('change', (event) => loadWeek(Number(event.target.value)));
+  document.getElementById('previous-week').addEventListener('click', () => stepWeek(-1));
+  document.getElementById('next-week').addEventListener('click', () => stepWeek(1));
+
+  document.getElementById('rename-toggle').addEventListener('click', () => {
+    const form = document.getElementById('rename-form');
+    form.hidden = !form.hidden;
+    document.getElementById('rename-input').value = weekState ? weekState.me.name : '';
+  });
+
+  document.getElementById('rename-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const newName = document.getElementById('rename-input').value;
+    try {
+      await callServer('apiSetName', PLAYER_TOKEN, newName);
+      document.getElementById('rename-form').hidden = true;
+      await reloadCurrentWeek();
+    } catch (error) {
+      showToast(errorMessage(error));
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    if (requestInFlight) return;
+    reloadCurrentWeek();
+  });
+
+  // Redraw countdowns; reload instead when a game has crossed its freeze time, so the other
+  // player's pick and the line come from the server.
+  setInterval(() => {
+    if (requestInFlight) return;
+    if (!weekState) return;
+    const crossedFreeze = weekState.games.some((game) => !game.frozen && isFrozenNow(game));
+    if (crossedFreeze) {
+      reloadCurrentWeek();
+    } else {
+      renderPage();
+    }
+  }, REDRAW_INTERVAL_MS);
+
+  setInterval(() => {
+    if (requestInFlight) return;
+    if (document.hidden) return;
+    reloadCurrentWeek();
+  }, RELOAD_INTERVAL_MS);
+
+  loadWeek(null);
+</script>

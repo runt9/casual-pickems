@@ -48,7 +48,8 @@ function applyPick_(game, mine, side, nowMs) {
  */
 function applyLock_(weekGames, weekType, mine, gameId, nowMs) {
   if (!roundInfo_(weekType).locks) throw new Error('Locks are not used in this round.');
-  const current = mine.lock ? weekGames[mine.lock] : null;
+  const has = function (id) { return Object.prototype.hasOwnProperty.call(weekGames, id); };
+  const current = mine.lock && has(mine.lock) ? weekGames[mine.lock] : null;
   if (current && isFrozen_(current, nowMs)) {
     throw new Error('Your lock is on a game that has already frozen, so it can no longer move.');
   }
@@ -56,7 +57,7 @@ function applyLock_(weekGames, weekType, mine, gameId, nowMs) {
     mine.lock = null;
     return;
   }
-  const target = weekGames[gameId];
+  const target = has(gameId) ? weekGames[gameId] : null;
   if (!target) throw new Error('That game is not in this week.');
   if (isFrozen_(target, nowMs)) throw new Error('That game is frozen.');
   if (!mine.picks[gameId]) throw new Error('Pick a team in that game before locking it.');

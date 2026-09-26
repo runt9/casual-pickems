@@ -49,8 +49,8 @@ function apiSetPick(token, gameId, side) {
   return withScriptLock_(function () {
     const nowMs = now_();
     const games = loadGames_();
-    const game = games[gameId];
-    if (!game) throw new Error('Unknown game.');
+    const game = typeof gameId === 'string' && Object.prototype.hasOwnProperty.call(games, gameId) ? games[gameId] : null;
+    if (!game || game.void) throw new Error('Unknown game.');
     const weekPicks = loadWeekPicks_(game.week);
     const mine = weekPicks[player.id] || emptyPlayerPicks_();
     applyPick_(game, mine, side, nowMs);
@@ -63,6 +63,7 @@ function apiSetPick(token, gameId, side) {
 /** gameId: game to lock, or null to remove the lock. */
 function apiSetLock(token, week, gameId) {
   const player = requirePlayer_(token);
+  if (gameId !== null && typeof gameId !== 'string') throw new Error('Invalid game.');
   return withScriptLock_(function () {
     const nowMs = now_();
     const games = loadGames_();

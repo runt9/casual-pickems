@@ -20,6 +20,9 @@ const CONFIG = {
   SYNC_EVERY_MINUTES: 15,
   // Ignore sync calls closer together than this (guards the public entry point).
   MIN_SYNC_GAP_SECONDS: 60,
+  // Games missing from a download are only voided when the download looks complete.
+  // A full 2026 file has 272 regular-season rows for the season.
+  MIN_ROWS_FOR_FULL_FETCH: 250,
 
   LOCK_MULTIPLIER: 2,
   // nflverse game_type -> round multiplier and whether a lock may be used.

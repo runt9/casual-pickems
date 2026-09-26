@@ -4,29 +4,77 @@
  */
 
 const STANDINGS_SHEET_ = 'Standings';
+const POINTS_FORMAT_ = '+0.0;-0.0;0.0';
 
+/**
+ * Redraws only tabs whose content changed since the last render (tracked by a hash in
+ * Script Properties), which keeps each sync fast. Tabs are created in order: Standings
+ * first, then weeks ascending; later weeks (playoffs) are appended at the end. Existing
+ * tabs are never reordered, so hiding or moving tabs by hand is respected.
+ */
 function renderSheets_(games, allPicks, players, nowMs) {
   if (!players.length) return;
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const season = seasonSummary_(games, allPicks, players, nowMs);
+  const hashes = readJson_('render', {});
 
-  renderStandings_(ss, season, players, nowMs);
-  const weeks = listWeeks_(games); // ascending: Week 3 ... Super Bowl
-  weeks.forEach(function (w, i) {
-    const sh = renderWeek_(ss, w, weekGames_(games, w.week), allPicks[w.week] || {}, players, nowMs,
-      season.weeks.filter(function (x) { return x.week === w.week; })[0]);
-    ss.setActiveSheet(sh);
-    ss.moveActiveSheet(i + 2);
+  const draw = function (name, layout, index) {
+    const h = hashOf_(layout);
+    let sh = ss.getSheetByName(name);
+    if (sh && hashes[name] === h) return;
+    if (!sh) sh = index === undefined ? ss.insertSheet(name) : ss.insertSheet(name, index);
+    paint_(sh, layout);
+    hashes[name] = h;
+  };
+
+  draw(STANDINGS_SHEET_, standingsLayout_(season, players, nowMs), 0);
+  listWeeks_(games).forEach(function (w) {
+    const summary = season.weeks.filter(function (x) { return x.week === w.week; })[0];
+    draw(w.label, weekLayout_(w, weekGames_(games, w.week), allPicks[w.week] || {}, players, nowMs, summary));
   });
-  ss.setActiveSheet(ss.getSheetByName(STANDINGS_SHEET_));
-  ss.moveActiveSheet(1);
+  writeJson_('render', hashes);
 }
 
-function getOrCreateSheet_(ss, name) {
-  return ss.getSheetByName(name) || ss.insertSheet(name);
+/** 32-bit FNV-1a over the layout JSON; only used to detect changes. */
+function hashOf_(obj) {
+  const s = JSON.stringify(obj);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16);
 }
 
-/** Prevent user-controlled text (display names) from being parsed as a formula. */
+/**
+ * Writes a layout: {rows, width, bold:[row], header:row|null, total:row|null, frozen, pointsCells:[[row,col,nRows,nCols]]}.
+ * Every string cell is formatted as plain text BEFORE writing so Sheets never reinterprets
+ * values like "+4.5 / -1.5" (formula) or "2-1" (date). Numbers get a points or integer format.
+ */
+function paint_(sh, L) {
+  sh.clear();
+  const rows = L.rows.map(function (r) {
+    const out = r.slice();
+    while (out.length < L.width) out.push('');
+    return out;
+  });
+  const range = sh.getRange(1, 1, rows.length, L.width);
+  range.setNumberFormats(rows.map(function (r) {
+    return r.map(function (v) { return typeof v === 'number' ? '0' : '@'; });
+  }));
+  range.setValues(rows);
+  (L.pointsCells || []).forEach(function (c) { sh.getRange(c[0], c[1], c[2], c[3]).setNumberFormat(POINTS_FORMAT_); });
+  sh.getRange(1, 1).setFontSize(14).setFontWeight('bold');
+  (L.bold || []).forEach(function (r) { sh.getRange(r, 1, 1, L.width).setFontWeight('bold').setBackground('#e8eaf6'); });
+  if (L.total) sh.getRange(L.total, 1, 1, L.width).setFontWeight('bold');
+  if (L.frozen) sh.setFrozenRows(L.frozen);
+  sh.autoResizeColumns(1, L.width);
+}
+
+/**
+ * Prevent user-controlled text (display names) from being parsed as a formula. Cells are
+ * also formatted as plain text (paint_); this is a second guard in case that is not honored.
+ */
 function safeText_(s) {
   s = String(s);
   return /^[=+\-@]/.test(s) ? "'" + s : s;
@@ -46,18 +94,8 @@ function lineText_(g, line) {
   return (line.fav === 'home' ? g.home : g.away) + ' -' + Math.abs(line.spread);
 }
 
-function writeBlock_(sh, rows, width) {
-  const padded = rows.map(function (r) {
-    const out = r.slice();
-    while (out.length < width) out.push('');
-    return out;
-  });
-  sh.getRange(1, 1, padded.length, width).setValues(padded);
-}
 
-function renderStandings_(ss, season, players, nowMs) {
-  const sh = getOrCreateSheet_(ss, STANDINGS_SHEET_);
-  sh.clear();
+function standingsLayout_(season, players, nowMs) {
   const names = players.map(function (p) { return safeText_(p.name); });
   const nameOf = {};
   players.forEach(function (p, i) { nameOf[p.id] = names[i]; });
@@ -120,16 +158,13 @@ function renderStandings_(ss, season, players, nowMs) {
   stat('Locks W-L', function (t) { return t.lockWins + '-' + t.lockLosses; });
   stat('Missed picks', function (t) { return t.missed; });
 
-  writeBlock_(sh, rows, width);
-  sh.getRange(1, 1).setFontSize(14).setFontWeight('bold');
-  bold.forEach(function (r) { sh.getRange(r, 1, 1, width).setFontWeight('bold').setBackground('#e8eaf6'); });
-  ptsRows.forEach(function (r) { sh.getRange(r, 3, 1, players.length).setNumberFormat('+0.0;-0.0;0.0'); });
-  sh.autoResizeColumns(1, width);
+  return {
+    rows: rows, width: width, bold: bold, total: null, frozen: 0,
+    pointsCells: ptsRows.map(function (r) { return [r, 3, 1, players.length]; }),
+  };
 }
 
-function renderWeek_(ss, w, games, weekPicks, players, nowMs, summary) {
-  const sh = getOrCreateSheet_(ss, w.label);
-  sh.clear();
+function weekLayout_(w, games, weekPicks, players, nowMs, summary) {
   const round = roundInfo_(w.type);
   const tzs = CONFIG.SHEET_TIMEZONES;
   const names = players.map(function (p) { return safeText_(p.name); });
@@ -166,8 +201,8 @@ function renderWeek_(ss, w, games, weekPicks, players, nowMs, summary) {
     rows.push(tzs.map(function (t) { return fmtTime_(g.kickoffMs, t.tz); })
       .concat([teamName_(g.away) + ' (' + g.away + ')', teamName_(g.home) + ' (' + g.home + ')', status,
         lineText_(g, v.line),
-        vals ? fmtPts_(vals.favWin) + ' / ' + fmtPts_(vals.favLoss) : '',
-        vals ? fmtPts_(vals.dogWin) + ' / ' + fmtPts_(vals.dogLoss) : ''])
+        vals ? 'W ' + fmtPts_(vals.favWin) + ' / L ' + fmtPts_(vals.favLoss) : '',
+        vals ? 'W ' + fmtPts_(vals.dogWin) + ' / L ' + fmtPts_(vals.dogLoss) : ''])
       .concat(picks)
       .concat([v.final ? g.away + ' ' + g.awayScore + ' - ' + g.homeScore + ' ' + g.home : ''])
       .concat(pts));
@@ -185,13 +220,8 @@ function renderWeek_(ss, w, games, weekPicks, players, nowMs, summary) {
     rows.push(['Winner: ' + (summary.winnerIds.length === 1 ? nameOf[summary.winnerIds[0]] : 'Tie')]);
   }
 
-  writeBlock_(sh, rows, width);
-  sh.getRange(1, 1).setFontSize(14).setFontWeight('bold');
-  sh.getRange(headerRow, 1, 1, width).setFontWeight('bold').setBackground('#e8eaf6').setWrap(true);
-  sh.getRange(totalRow, 1, 1, width).setFontWeight('bold');
-  sh.getRange(headerRow + 1, firstPtsCol, Math.max(1, totalRow - headerRow), players.length)
-    .setNumberFormat('+0.0;-0.0;0.0');
-  sh.setFrozenRows(headerRow);
-  sh.autoResizeColumns(1, width);
-  return sh;
+  return {
+    rows: rows, width: width, bold: [headerRow], total: totalRow, frozen: headerRow,
+    pointsCells: [[headerRow + 1, firstPtsCol, totalRow - headerRow, players.length]],
+  };
 }

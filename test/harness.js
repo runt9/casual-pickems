@@ -44,20 +44,32 @@ function parseCsv(text) {
 
 class FakeRange {
   constructor(sheet, r, c, nr, nc) { Object.assign(this, { sheet, r, c, nr, nc }); }
+  setNumberFormats(f) {
+    if (f.length !== this.nr || f.some(row => row.length !== this.nc)) throw new Error('setNumberFormats dimension mismatch');
+    f.forEach((row, i) => row.forEach((val, j) => { this.sheet.formats[(this.r + i) + ':' + (this.c + j)] = val; }));
+    return this;
+  }
+  setNumberFormat(f) {
+    for (let i = 0; i < this.nr; i++) for (let j = 0; j < this.nc; j++) this.sheet.formats[(this.r + i) + ':' + (this.c + j)] = f;
+    return this;
+  }
   setValues(v) {
     if (v.length !== this.nr || v.some(row => row.length !== this.nc)) throw new Error('setValues dimension mismatch');
     v.forEach((row, i) => row.forEach((val, j) => { this.sheet.cells[(this.r + i) + ':' + (this.c + j)] = val; }));
     return this;
   }
 }
-['setFontSize', 'setFontWeight', 'setBackground', 'setWrap', 'setNumberFormat'].forEach(m => {
+['setFontSize', 'setFontWeight', 'setBackground', 'setWrap'].forEach(m => {
   FakeRange.prototype[m] = function () { return this; };
 });
 
 class FakeSheet {
-  constructor(name) { this.name = name; this.cells = {}; }
+  constructor(name) { this.name = name; this.cells = {}; this.formats = {}; this.paints = 0; }
   getName() { return this.name; }
-  clear() { this.cells = {}; return this; }
+  clear() {
+    if (this.lockState && this.lockState.held) this.lockState.sheetWritesWhileLocked++;
+    this.cells = {}; this.formats = {}; this.paints++; return this;
+  }
   getRange(r, c, nr, nc) {
     if (r < 1 || c < 1 || nr < 1 || nc < 1) throw new Error('bad range ' + [r, c, nr, nc]);
     return new FakeRange(this, r, c, nr || 1, nc || 1);
@@ -77,11 +89,11 @@ class FakeSheet {
 class FakeSpreadsheet {
   constructor() { this.sheets = []; this.active = null; }
   getSheetByName(n) { return this.sheets.find(s => s.name === n) || null; }
-  insertSheet(n) { const s = new FakeSheet(n); this.sheets.push(s); return s; }
-  setActiveSheet(s) { this.active = s; return s; }
-  moveActiveSheet(i) {
-    this.sheets.splice(this.sheets.indexOf(this.active), 1);
-    this.sheets.splice(i - 1, 0, this.active);
+  insertSheet(n, index) {
+    const s = new FakeSheet(n);
+    s.lockState = this.lockState;
+    if (index === undefined) this.sheets.push(s); else this.sheets.splice(index, 0, s);
+    return s;
   }
 }
 
@@ -93,6 +105,8 @@ function load(opts) {
   const clock = { now: opts.now || Date.now() };
   const session = { active: opts.activeUser === undefined ? 'owner@example.com' : opts.activeUser, effective: 'owner@example.com' };
   const net = { csv: opts.csv || '', status: 200, fetches: 0 };
+  const lockState = { held: false, sheetWritesWhileLocked: 0 };
+  ss.lockState = lockState;
 
   const props = {
     getProperty: k => (store.has(k) ? store.get(k) : null),
@@ -104,7 +118,12 @@ function load(opts) {
   const ctx = {
     console,
     PropertiesService: { getScriptProperties: () => props },
-    LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock: () => {}, releaseLock: () => {} }) },
+    LockService: {
+      getScriptLock: () => ({
+        tryLock: () => { if (lockState.held) return false; lockState.held = true; return true; },
+        releaseLock: () => { lockState.held = false; },
+      }),
+    },
     UrlFetchApp: {
       fetch: () => { net.fetches++; return { getResponseCode: () => net.status, getContentText: () => net.csv }; },
     },
@@ -143,7 +162,7 @@ function load(opts) {
   vm.runInContext(code, ctx, { filename: 'bundle.js' });
   if (opts.config) opts.config(ctx.__exports.CONFIG);
   vm.runInContext('now_ = function () { return __clock.now; };', Object.assign(ctx, { __clock: clock }));
-  return { ctx, store, ss, logs, clock, session, net };
+  return { ctx, store, ss, logs, clock, session, net, lockState };
 }
 
 module.exports = { load, zonedToUtc, parseCsv };

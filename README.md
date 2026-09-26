@@ -62,6 +62,10 @@ The default `Sheet1` tab can be deleted.
 - **Lost or leaked link:** run `resetP2Link` (or `resetP1Link`); the old link stops working; the new one is printed in the log.
 - **Force a refresh** of the sheet: run `syncNow`.
 - **Sheet lag:** picks save instantly, but the sheet (including the "picked" markers) refreshes every 15 minutes.
+- **Sheet redraws** only touch tabs whose content changed, and never reorder tabs, so hiding or
+  moving tabs by hand sticks. Text cells are written as plain text so Sheets does not turn values
+  like "2-1" into dates. Manual edits to a tab are overwritten the next time its content changes.
+- **Sync throttle:** at most one sync per minute, counting failed attempts.
 - **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friend cannot.
 
 ## Rules as implemented
@@ -70,8 +74,13 @@ The default `Sheet1` tab can be deleted.
 - The line used is the last one the sync saw **before** the freeze. With a 15-minute sync and
   nflverse updating every 20-40 minutes, it can be up to about an hour older than the true line at
   the freeze. Line moves after the freeze are ignored.
-- No line available at freeze: scored as a pick'em (+5 / -1 either side).
-- Kickoff changes (flexed games) move the freeze only while the game is still open.
+- No line seen before the freeze (including games that froze before the script was installed):
+  scored as a pick'em (+5 / -1 either side).
+- Kickoff changes (flexed games) move the freeze only while the game is still open. Freeze is
+  checked against the stored kickoff before new data is applied, so a game cannot reopen.
+- A game that disappears from a complete nflverse download while unfinished (cancelled, or its
+  ID changed) is voided: excluded from picks, scoring and week completion. It is restored if it
+  reappears. Downloads with fewer than 250 rows for the season never void anything.
 - One optional lock per regular-season week (x2 win or loss). It can be moved while both the
   current and new game are open. No locks in the playoffs.
 - Playoff multipliers: Wild Card x2, Divisional x3, Conference x4, Super Bowl x6.
@@ -79,7 +88,6 @@ The default `Sheet1` tab can be deleted.
 - Underdog win value is capped at 20 before the lock or playoff multiplier.
 - Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for both.
 - Weekly and season ties are recorded as ties.
-- A game that is never played (cancelled) never goes final, so its week stays "In progress".
 
 ## Tests
 

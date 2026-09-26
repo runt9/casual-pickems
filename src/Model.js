@@ -7,11 +7,15 @@ function weekLabel_(week, type) {
   return type === 'REG' ? 'Week ' + week : roundInfo_(type).label;
 }
 
+/** Stored games minus voided ones (cancelled or re-identified upstream). */
+function liveGames_(games) {
+  return Object.keys(games).map(function (id) { return games[id]; }).filter(function (g) { return !g.void; });
+}
+
 /** [{week, type, label}] sorted by week. */
 function listWeeks_(games) {
   const seen = {};
-  Object.keys(games).forEach(function (id) {
-    const g = games[id];
+  liveGames_(games).forEach(function (g) {
     seen[g.week] = g.type;
   });
   return Object.keys(seen).map(Number).sort(function (a, b) { return a - b; }).map(function (w) {
@@ -20,7 +24,7 @@ function listWeeks_(games) {
 }
 
 function weekGames_(games, week) {
-  return Object.keys(games).map(function (id) { return games[id]; })
+  return liveGames_(games)
     .filter(function (g) { return g.week === week; })
     .sort(function (a, b) {
       return (a.kickoffMs || Infinity) - (b.kickoffMs || Infinity) || (a.id < b.id ? -1 : 1);

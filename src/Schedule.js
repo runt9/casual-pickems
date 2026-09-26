@@ -56,54 +56,67 @@ function countsForGame_(row) {
 /**
  * Merge freshly parsed rows into stored games (id -> game). Mutates `games`.
  *
- * Spread handling:
+ * Freeze and line rules:
  *  - While a game is open, every sync records the latest line as `lastSpread`.
- *  - The first sync at/after the freeze time takes the snapshot from `lastSpread`,
- *    i.e. the last line seen BEFORE the freeze, so lines published after the
- *    freeze never count. If no line was ever seen before the freeze (e.g. the
- *    script was installed late), the current line is used; if there is no line
- *    at all, the game is scored as a pick'em (spread 0).
+ *  - Freeze is decided from the STORED kickoff before any new data is applied, so a
+ *    kickoff that moves (or goes blank) after the clock freeze cannot reopen the game.
+ *  - The snapshot line is the last line seen before the freeze. If none was seen, the
+ *    game is scored as a pick'em (spread 0). Lines published after the freeze never count.
  *  - After the snapshot, kickoff/teams/line are never changed; only scores update.
+ *  - `fullFetch`: rows are a complete season file, so an unfinished stored game missing
+ *    from it has been cancelled or re-identified and is marked void (excluded everywhere).
+ *    Voiding is reversed if the game reappears.
  */
-function mergeRows_(games, rows, nowMs) {
+function mergeRows_(games, rows, nowMs, fullFetch) {
+  const seen = {};
   rows.forEach(function (row) {
     if (!countsForGame_(row)) return;
-    let g = games[row.id];
+    seen[row.id] = true;
+    let g = Object.prototype.hasOwnProperty.call(games, row.id) ? games[row.id] : null;
     if (!g) {
       g = {
         id: row.id, week: row.week, type: row.type, away: row.away, home: row.home,
         kickoffMs: row.kickoffMs, lastSpread: null, lastSpreadAtMs: null, snap: null,
-        awayScore: null, homeScore: null, result: null,
+        awayScore: null, homeScore: null, result: null, void: false,
       };
       games[row.id] = g;
     }
+    g.void = false;
+
+    // 1. Freeze using what we already had, before trusting new kickoff data.
+    if (!g.snap && isFrozen_(g, nowMs)) takeSnapshot_(g, nowMs);
+
+    // 2. Open games take new kickoff/teams, then freeze or record the current line.
     if (!g.snap) {
       g.kickoffMs = row.kickoffMs;
       g.away = row.away;
       g.home = row.home;
-    }
-    g.awayScore = row.awayScore;
-    g.homeScore = row.homeScore;
-    g.result = row.result;
-
-    if (g.snap) return;
-    const f = freezeAtMs_(g);
-    if (f === null || nowMs < f) {
-      if (row.spread !== null) {
+      if (isFrozen_(g, nowMs)) {
+        takeSnapshot_(g, nowMs);
+      } else if (row.spread !== null) {
         g.lastSpread = row.spread;
         g.lastSpreadAtMs = nowMs;
       }
-    } else {
-      takeSnapshot_(g, row.spread, nowMs);
     }
+
+    g.awayScore = row.awayScore;
+    g.homeScore = row.homeScore;
+    g.result = row.result;
   });
+
+  if (fullFetch) {
+    Object.keys(games).forEach(function (id) {
+      const g = games[id];
+      if (!seen[id] && g.result === null) g.void = true;
+    });
+  }
   return games;
 }
 
-function takeSnapshot_(g, currentSpread, nowMs) {
-  let spread = g.lastSpread;
-  let source = 'before-freeze';
-  if (spread === null) { spread = currentSpread; source = 'after-freeze'; }
-  if (spread === null) { spread = 0; source = 'no-line'; }
-  g.snap = { spread: spread, values: pointValues_(spread), atMs: nowMs, source: source };
+/** Freeze a game: the last line seen strictly before its freeze time, else pick'em. */
+function takeSnapshot_(g, nowMs) {
+  const f = freezeAtMs_(g);
+  const usable = g.lastSpread !== null && g.lastSpreadAtMs !== null && (f === null || g.lastSpreadAtMs < f);
+  const spread = usable ? g.lastSpread : 0;
+  g.snap = { spread: spread, values: pointValues_(spread), atMs: nowMs, source: usable ? 'before-freeze' : 'no-line' };
 }

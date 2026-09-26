@@ -109,12 +109,39 @@ test('snapshot uses the last line seen before the freeze and ignores later moves
   assert.strictEqual(g.result, 4);
 });
 
-test('late install freezes with the current line; missing line scores as pick\'em', () => {
+test('kickoff moved earlier: a line recorded after the new freeze time does not count', () => {
+  const { ctx } = load();
+  const games = {};
+  ctx.mergeRows_(games, [row({ spread: 3 })], KICK - 2 * H);                      // seen at K-2h
+  ctx.mergeRows_(games, [row({ spread: 3, kickoffMs: KICK - 1.5 * H })], KICK - 1.9 * H); // new freeze K-2.5h
+  assert.deepStrictEqual([games['2026_03_AAA_BBB'].snap.spread, games['2026_03_AAA_BBB'].snap.source], [0, 'no-line']);
+});
+
+test('no line seen before the freeze scores as pick\'em, even if a line appears after', () => {
   const { ctx } = load();
   const games = {};
   ctx.mergeRows_(games, [row({ spread: 4.5 }), row({ id: 'X', spread: null })], KICK - 0.5 * H);
-  assert.deepStrictEqual([games['2026_03_AAA_BBB'].snap.spread, games['2026_03_AAA_BBB'].snap.source], [4.5, 'after-freeze']);
+  assert.deepStrictEqual([games['2026_03_AAA_BBB'].snap.spread, games['2026_03_AAA_BBB'].snap.source], [0, 'no-line']);
   assert.deepStrictEqual([games.X.snap.spread, games.X.snap.source], [0, 'no-line']);
+  const g2 = {};
+  ctx.mergeRows_(g2, [row({ spread: null })], KICK - 3 * H);
+  ctx.mergeRows_(g2, [row({ spread: 9.5 })], KICK - 0.9 * H);
+  assert.strictEqual(g2['2026_03_AAA_BBB'].snap.spread, 0);
+});
+
+test('kickoff moving or going blank after the clock freeze cannot reopen the game', () => {
+  const { ctx } = load();
+  for (const moved of [KICK + 3 * H, null]) {
+    const games = {};
+    ctx.mergeRows_(games, [row({ spread: 3 })], KICK - 2 * H);
+    const g = games['2026_03_AAA_BBB'];
+    const mine = ctx.emptyPlayerPicks_();
+    assert.throws(() => ctx.applyPick_(g, mine, 'home', KICK - 0.9 * H), /frozen/); // clock-frozen, no snapshot yet
+    ctx.mergeRows_(games, [row({ spread: 7, kickoffMs: moved })], KICK - 0.8 * H);
+    assert.strictEqual(g.snap.spread, 3, 'pre-freeze line kept');
+    assert.strictEqual(g.kickoffMs, KICK, 'stored kickoff kept');
+    assert.throws(() => ctx.applyPick_(g, mine, 'home', KICK - 0.7 * H), /frozen/);
+  }
 });
 
 test('kickoff moved before the freeze moves the freeze; after the freeze it is fixed', () => {
@@ -187,7 +214,8 @@ test('real 2026 data: Week 3 Thursday game frozen at install, Sunday games open,
   assert.strictEqual(st.weeks[0].week, 3);
   const tnf = st.games.find(g => g.id === '2026_03_ATL_GB');
   assert.strictEqual(tnf.frozen, true);
-  assert.strictEqual(tnf.line.spread, 4.5);
+  assert.strictEqual(tnf.line.spread, 0); // no line was seen before its freeze (installed after it)
+  assert.strictEqual(tnf.line.source, 'no-line');
   assert.strictEqual(tnf.final, true);
   assert.strictEqual(tnf.players[0].score.status, 'nopick');
   const open = st.games.filter(g => !g.frozen);
@@ -206,8 +234,11 @@ test('privacy: an open pick never appears in the other player\'s state or on the
   const theirs = g.players.find(p => p.id === p1.id);
   assert.deepStrictEqual(Object.keys(theirs).sort(), ['hasPick', 'id', 'visible']);
   assert.strictEqual(theirs.hasPick, true);
-  assert(!JSON.stringify(seen).includes('"lock"'));
+  seen.games.filter(x => !x.frozen).forEach(x => x.players.filter(p => p.id === p1.id).forEach(p => {
+    assert(!('side' in p) && !('locked' in p) && !('score' in p), 'p1 details hidden on ' + x.id);
+  }));
   assert.strictEqual(seen.myLock, null);
+  assert.strictEqual(seen.totals.find(t => t.id === p1.id).points, 0);
   ctx.sync_(true);
   const sheet = env.ss.getSheetByName('Week 3').rows();
   const kcRow = sheet.find(r => r && String(r[2]).includes('KC'));
@@ -395,6 +426,109 @@ test('sync throttle ignores rapid repeat calls unless forced', () => {
   env.clock.now += 61 * 1000;
   env.ctx.syncTrigger();
   assert.strictEqual(env.net.fetches, before + 1);
+});
+
+// ---------------------------------------------------------------- added after code review
+test('cancelled game (missing from a full download) is voided and excluded; reappearing restores it', () => {
+  const env = setupEnv(SAT);
+  const { ctx, p1, net, clock } = env;
+  const gone = '2026_03_KC_MIA';
+  ctx.apiSetPick(p1.token, gone, 'home');
+  const full = REAL_CSV;
+  net.csv = full.split('\n').filter(l => !l.startsWith(gone)).join('\n');
+  clock.now += 2 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(ctx.loadGames_()[gone].void, true);
+  assert(!ctx.apiGetState(p1.token, 3).games.some(g => g.id === gone));
+  assert.throws(() => ctx.apiSetPick(p1.token, gone, 'away'), /Unknown game/);
+  // truncated download: nothing voided
+  net.csv = full.split('\n').slice(0, 50).join('\n');
+  clock.now += 2 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(ctx.loadGames_()['2026_03_LAC_BUF'].void, false);
+  net.csv = full;
+  clock.now += 2 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(ctx.loadGames_()[gone].void, false);
+  assert(ctx.apiGetState(p1.token, 3).games.some(g => g.id === gone));
+});
+
+test('a voided game does not block week completion or champions', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  env.ctx.setup();
+  // Inject an orphan unfinished game (as if nflverse re-identified or cancelled it).
+  const games = env.ctx.loadGames_();
+  games.ORPHAN = Object.assign({}, games[Object.keys(games)[0]], { id: 'ORPHAN', result: null, awayScore: null, homeScore: null });
+  env.ctx.saveGames_(games);
+  env.clock.now = Date.UTC(2026, 2, 1);
+  env.ctx.sync_(true);
+  const s = env.ctx.seasonSummary_(env.ctx.loadGames_(), {}, JSON.parse(env.store.get('players')), env.clock.now);
+  assert(s.weeks.every(w => w.complete));
+});
+
+test('only intended functions are publicly callable (no trailing underscore)', () => {
+  const { ctx } = load();
+  const pub = Object.keys(ctx).filter(k => typeof ctx[k] === 'function' && !k.endsWith('_') &&
+    !['console'].includes(k) && !/^[A-Z]/.test(k)).sort();
+  assert.deepStrictEqual(pub, ['apiGetState', 'apiSetLock', 'apiSetName', 'apiSetPick', 'doGet', 'printLinks',
+    'resetP1Link', 'resetP2Link', 'resetPlayerLink', 'setup', 'syncNow', 'syncTrigger'].sort());
+});
+
+test('owner-only functions also refuse a different signed-in account', () => {
+  const env = load({ now: SAT, csv: REAL_CSV, activeUser: 'friend@example.com' });
+  assert.throws(() => env.ctx.setup(), /Owner only/);
+  assert.throws(() => env.ctx.resetP1Link(), /Owner only/);
+});
+
+test('sheet: every text cell is plain-text formatted, numbers are not; tabs ordered Standings then weeks ascending', () => {
+  const env = setupEnv(SAT);
+  env.ctx.apiSetName(env.p1.token, 'Runt');
+  env.clock.now = Date.UTC(2026, 8, 29, 12, 0);
+  env.ctx.sync_(true);
+  env.ss.sheets.forEach(sh => {
+    Object.entries(sh.cells).forEach(([k, v]) => {
+      const f = sh.formats[k];
+      if (typeof v === 'string' && v !== '') assert.strictEqual(f, '@', sh.name + ' ' + k + ' ' + v);
+      else if (typeof v === 'number') assert.notStrictEqual(f, '@', sh.name + ' ' + k);
+    });
+  });
+  const names = env.ss.sheets.map(s => s.name);
+  assert.strictEqual(names[0], 'Standings');
+  assert.deepStrictEqual(names.slice(1, 4), ['Week 3', 'Week 4', 'Week 5']);
+  assert.strictEqual(names[names.length - 1], 'Week 18');
+  const w3 = env.ss.getSheetByName('Week 3').rows();
+  assert(w3.some(r => r && r.some(c => /^W \+\d/.test(String(c)))), 'point values start with a letter');
+});
+
+test('render skips unchanged tabs and never touches sheets while holding the script lock', () => {
+  const env = setupEnv(SAT);
+  const w5 = env.ss.getSheetByName('Week 5');
+  const before = w5.paints;
+  env.clock.now += 2 * 60 * 1000;
+  env.ctx.sync_(true);
+  assert.strictEqual(w5.paints, before, 'unchanged week not repainted');
+  assert.strictEqual(env.lockState.sheetWritesWhileLocked, 0);
+  assert.strictEqual(env.lockState.held, false);
+});
+
+test('throttle also applies after a failed fetch', () => {
+  const env = setupEnv(SAT);
+  env.net.status = 500;
+  env.clock.now += 61 * 1000;
+  env.ctx.syncTrigger();
+  const n = env.net.fetches;
+  env.clock.now += 10 * 1000;
+  env.ctx.syncTrigger();
+  assert.strictEqual(env.net.fetches, n);
+});
+
+test('lookups reject inherited property names as game ids', () => {
+  const env = setupEnv(SAT);
+  ['constructor', '__proto__', 'toString'].forEach(id => {
+    assert.throws(() => env.ctx.apiSetPick(env.p1.token, id, 'home'), /Unknown game/);
+    assert.throws(() => env.ctx.apiSetLock(env.p1.token, 3, id), /not in this week/);
+  });
+  assert.throws(() => env.ctx.apiSetLock(env.p1.token, 3, { id: 1 }), /Invalid game/);
 });
 
 console.log('\n' + passed + ' passed' + (process.exitCode ? ', some FAILED' : ''));

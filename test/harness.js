@@ -135,9 +135,15 @@ function load(opts) {
         if (!m) throw new Error('unparseable ' + s);
         return new Date(zonedToUtc(+m[1], +m[2], +m[3], +m[4], +m[5], tz));
       },
-      formatDate: (d, tz) => new Intl.DateTimeFormat('en-US', {
-        timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-      }).format(d),
+      // Real formatDate uses Java SimpleDateFormat: 'EEE MMM d, h:mm a' -> "Sun Sep 27, 12:00 PM".
+      formatDate: (d, tz, fmt) => {
+        if (fmt !== 'EEE MMM d, h:mm a') throw new Error('unexpected format ' + fmt);
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+        }).formatToParts(d);
+        const get = t => parts.find(p => p.type === t).value;
+        return `${get('weekday')} ${get('month')} ${get('day')}, ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
+      },
       getUuid: () => crypto.randomUUID(),
     },
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },

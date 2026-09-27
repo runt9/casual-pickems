@@ -224,6 +224,16 @@ test('real 2026 data: Week 3 Thursday game frozen at install, Sunday games open,
   assert.strictEqual(env.net.fetches, 1);
 });
 
+test('sheet times: kickoff in both sheet timezones and the freeze time, in the real formatDate pattern', () => {
+  const env = setupEnv(SAT);
+  const rows = env.ss.getSheetByName('Week 3').rows();
+  const tnf = rows.find(r => r && r[2] === 'Falcons (ATL)');
+  assert.deepStrictEqual(tnf.slice(0, 2), ['Thu Sep 24, 7:15 PM', 'Fri Sep 25, 2:15 AM']); // 8:15 PM ET
+  const early = rows.find(r => r && r[2] === 'Panthers (CAR)');
+  assert.deepStrictEqual(early.slice(0, 2), ['Sun Sep 27, 12:00 PM', 'Sun Sep 27, 7:00 PM']); // 1:00 PM ET
+  assert.strictEqual(early[4], 'Open until Sun Sep 27, 11:00 AM');
+});
+
 test('privacy: an open pick never appears in the other player\'s state or on the sheet', () => {
   const env = setupEnv(SAT);
   const { ctx, p1, p2 } = env;

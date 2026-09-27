@@ -1,6 +1,6 @@
 # NFL Pick'em (Google Sheets + Apps Script)
 
-Two-player blind pick'em. Picks and lines freeze 1 hour before each kickoff; points are scored
+Blind pick'em for a small group (`CONFIG.PLAYER_COUNT`, currently 3). Picks and lines freeze 1 hour before each kickoff; points are scored
 against the frozen line with the half-point model in `src/Config.js`. The shared sheet is a
 read-only view; picks live in Script Properties and only appear on the sheet once frozen.
 
@@ -8,6 +8,7 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 
 | File | Purpose |
 |---|---|
+| `src/Constants.js` | Closed sets of stored values: sides, score statuses, game types, line sources |
 | `src/Config.js` | Every rule value: season, start week, freeze offset, multipliers, scoring constants, timezones |
 | `src/Scoring.js` | Point values from a spread; scoring one pick (pure) |
 | `src/Rules.js` | Freeze time, pick and lock validation (pure) |
@@ -16,8 +17,9 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 | `src/Model.js` | View models; the single place pick visibility is decided |
 | `src/Sync.js` | 15-minute trigger: fetch, freeze, save, render |
 | `src/Render.js` | Standings tab and week tabs |
+| `src/Discord.js` | Discord reminders and weekly results through a webhook (off until `DISCORD_WEBHOOK_URL` is set) |
 | `src/WebApp.js` | `doGet` and the `api*` functions the pick page calls |
-| `src/Setup.js` | Owner-only: `setup`, `printLinks`, `resetP1Link`/`resetP2Link`, `syncNow` |
+| `src/Setup.js` | Owner-only: `setup`, `addPlayer`, `printLinks`, `resetP1Link`/`resetP2Link`/`resetP3Link`, `syncNow` |
 | `src/Index.html` | Pick page layout; pulls in the two files below with `include_()` |
 | `src/Styles.html` | Pick page CSS |
 | `src/Client.html` | Pick page JavaScript (runs in the browser; calls the `api*` functions) |
@@ -49,10 +51,10 @@ minute), and the Setup.js functions, which reject any caller who is not the owne
    Authorize when asked. Google will warn that the app is unverified; this is expected for a
    personal script (Advanced > Go to project). Copy the web app URL ending in `/exec`.
 5. **Project Settings > Script Properties > Add:** `WEB_APP_URL` = that URL.
-6. In the editor, select `setup` and **Run**. It creates both players, installs the 15-minute
-   trigger, runs the first sync, and prints both personal links in the execution log
-   (p1 = you, p2 = your friend).
-7. Share the spreadsheet with your friend as **Viewer** (not Editor). Send them the p2 link
+6. In the editor, select `setup` and **Run**. It creates `CONFIG.PLAYER_COUNT` players, installs
+   the 15-minute trigger, runs the first sync, and prints every personal link in the execution log
+   (p1 = you, p2, p3 = your friends).
+7. Share the spreadsheet with your friends as **Viewer** (not Editor). Send each their own link
    privately. The link is their login: anyone with it can pick as them.
 8. Each of you opens your link and uses "Change name".
 
@@ -61,14 +63,27 @@ The default `Sheet1` tab can be deleted.
 ## Operating notes
 
 - **Code changes** only reach the pick page after **Deploy > Manage deployments > Edit > Version: New version**. The URL stays the same.
-- **Lost or leaked link:** run `resetP2Link` (or `resetP1Link`); the old link stops working; the new one is printed in the log.
+- **Lost or leaked link:** run `resetP1Link`, `resetP2Link` or `resetP3Link`; the old link stops working; the new one is printed in the log.
+- **Adding a player mid-season:** make sure `CONFIG.PLAYER_COUNT` allows one more, deploy, then run
+  `addPlayer`. It creates the next player (e.g. p3), syncs, and prints every link; existing links do not
+  change. It refuses once `CONFIG.PLAYER_COUNT` players exist, so a second run cannot add a spare.
 - **Force a refresh** of the sheet: run `syncNow`.
 - **Sheet lag:** picks save instantly, but the sheet (including the "picked" markers) refreshes every 15 minutes.
 - **Sheet redraws** only touch tabs whose content changed, and never reorder tabs, so hiding or
   moving tabs by hand sticks. Text cells are written as plain text so Sheets does not turn values
   like "2-1" into dates. Manual edits to a tab are overwritten the next time its content changes.
 - **Sync throttle:** at most one sync per minute, counting failed attempts.
-- **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friend cannot.
+- **Discord:** add Script Property `DISCORD_WEBHOOK_URL` (the webhook's URL; keep it out of the repo)
+  to turn posts on; delete it to turn them off. Posts go to the webhook's channel and carry names and
+  totals only, never picks:
+  - *Reminder* 24 hours before the first kickoff of each game day (US Eastern date), naming anyone
+    with an unpicked open game that day (with a count) and anyone without a lock in a regular-season
+    week. Nothing is posted if nobody is missing anything. The 15-minute sync posts it within
+    15 minutes of that time.
+  - *Results* as soon as a week is complete: each player's week points, the winner, and the regular
+    season (or, in the playoffs, full season) totals. Weeks already complete when the webhook is
+    first set are not posted. A failed post is retried on the next sync.
+- **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friends cannot.
 
 ## Rules as implemented
 
@@ -88,26 +103,37 @@ The default `Sheet1` tab can be deleted.
 - Playoff multipliers: Wild Card x2, Divisional x3, Conference x4, Super Bowl x6.
 - Ties score 0 (locked or not). Missed picks score 0.
 - Underdog win value is capped at 20 before the lock or playoff multiplier.
-- Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for both.
+- Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for p1 and p2.
 - Weekly and season ties are recorded as ties.
+- Champions: regular season, and full season including playoffs.
+- A player added mid-season is not in games that froze before they were added: those are not
+  missed or scored for them, show blank on the sheet, and a week that froze entirely before they
+  joined leaves them out of that week's winner. The Standings tab's Playoffs
+  row shows points only.
 
 ## Tests
 
+The tests read nflverse `games.csv`, which is not in this repo. From the repo root:
+
 ```
+git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
 cd test
-GAMES_CSV=/path/to/nflverse/games.csv node run.js
+node run.js
+node ui.js
 ```
+
+Both read `../nflverse/nfldata/data/games.csv` (relative to the repo root) by default; set
+`GAMES_CSV` to use a different copy.
 
 `run.js` covers: scoring parity with an independent Python implementation for every half-point
 spread 0-30; the agreed point table; monotonicity; freeze and snapshot behavior (including line
 moves after the freeze, late install, missing lines, kickoff changes); pick and lock rules; a
 full Week 3 on real 2026 data; pick privacy on both the page and the sheet; a full 2025
 regular season + playoff replay checked against an independent calculation; owner-only
-guards; token validation; name sanitizing (including formula injection); fetch failure; and the
-sync throttle.
+guards; token validation; name sanitizing (including formula injection); fetch failure; the
+sync throttle; and kickoff and freeze times on the sheet.
 
-`ui.js` (needs Playwright) assembles the pick page the way Apps Script does, renders it in headless
-Chromium against the same fakes, and checks picking, locking, clearing a pick, the no-lock banner,
-the other player's status, and the frozen view. Run it the same way: `node ui.js`.
-
-Get `games.csv` from https://github.com/nflverse/nfldata/blob/master/data/games.csv
+`ui.js` assembles the pick page the way Apps Script does, renders it in headless Chromium against
+the same fakes, and checks picking, locking, clearing a pick, the no-lock banner, the other
+player's status, and the frozen view. It loads Playwright from the global npm root
+(`npm i -g playwright`).

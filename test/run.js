@@ -224,6 +224,26 @@ test('real 2026 data: Week 3 Thursday game frozen at install, Sunday games open,
   assert.strictEqual(env.net.fetches, 1);
 });
 
+test('sheet times: kickoff in both sheet timezones and the freeze time, in the real formatDate pattern', () => {
+  const env = setupEnv(SAT);
+  const rows = env.ss.getSheetByName('Week 3').rows();
+  const tnf = rows.find(r => r && r[2] === 'Falcons (ATL)');
+  assert.deepStrictEqual(tnf.slice(0, 2), ['Thu Sep 24, 7:15 PM', 'Fri Sep 25, 2:15 AM']); // 8:15 PM ET
+  const early = rows.find(r => r && r[2] === 'Panthers (CAR)');
+  assert.deepStrictEqual(early.slice(0, 2), ['Sun Sep 27, 12:00 PM', 'Sun Sep 27, 7:00 PM']); // 1:00 PM ET
+  assert.strictEqual(early[4], 'Open until Sun Sep 27, 11:00 AM');
+});
+
+test('the freeze offset in user-facing text follows CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF', () => {
+  const env = load({ now: SAT, csv: REAL_CSV, config: c => { c.FREEZE_MINUTES_BEFORE_KICKOFF = 90; } });
+  env.ctx.setup();
+  const [p1] = JSON.parse(env.store.get('players'));
+  assert.strictEqual(env.ctx.apiGetState(p1.token, 3).freezeMinutesBeforeKickoff, 90);
+  assert.throws(() => env.ctx.apiSetPick(p1.token, '2026_03_ATL_GB', 'home'), /Picks closed 90 minutes before kickoff/);
+  const note = env.ss.getSheetByName('Week 3').rows()[1][0];
+  assert(note.includes('Picks and lines appear 90 minutes before each kickoff.'), note);
+});
+
 test('privacy: an open pick never appears in the other player\'s state or on the sheet', () => {
   const env = setupEnv(SAT);
   const { ctx, p1, p2 } = env;
@@ -232,8 +252,9 @@ test('privacy: an open pick never appears in the other player\'s state or on the
   const seen = ctx.apiGetState(p2.token, 3);
   const g = seen.games.find(x => x.id === '2026_03_KC_MIA');
   const theirs = g.players.find(p => p.id === p1.id);
-  assert.deepStrictEqual(Object.keys(theirs).sort(), ['hasPick', 'id', 'visible']);
+  assert.deepStrictEqual(Object.keys(theirs).sort(), ['hasPick', 'id', 'plays', 'visible']);
   assert.strictEqual(theirs.hasPick, true);
+  assert.strictEqual(theirs.plays, true); // an open game is always one every player is in
   seen.games.filter(x => !x.frozen).forEach(x => x.players.filter(p => p.id === p1.id).forEach(p => {
     assert(!('side' in p) && !('locked' in p) && !('score' in p), 'p1 details hidden on ' + x.id);
   }));
@@ -364,13 +385,216 @@ test('historical replay (2025 regular season + playoffs) matches an independent 
   assert.strictEqual(summary.weeks.length, 22);
   assert(summary.weeks.every(w => w.complete));
   const standings = env.ss.getSheetByName('Standings').rows();
-  assert(standings.find(r => r && r[0] === 'Full season')[4].includes('champion') ||
-    standings.find(r => r && r[0] === 'Full season')[4] === 'Tie');
+  const fullSeason = standings.find(r => r && r[0] === 'Full season');
+  assert.match(fullSeason[fullSeason.length - 1], / \(champion\)$|^Tie$/);
   assert.strictEqual(env.ss.sheets.length, 23);
   // Largest stored value must stay under the per-property limit.
   const biggest = Math.max(...[...store.values()].map(v => v.length));
   assert(biggest < 9000, 'largest property ' + biggest);
   console.log('     replay totals', JSON.stringify(want), 'largest property bytes', biggest);
+});
+
+test('third player added mid-season: existing links kept, not in games frozen before joining, not a winner of earlier weeks', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; c.PLAYER_COUNT = 2; } });
+  const { ctx, clock, store } = env;
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+
+  // Friday of Week 3: Weeks 1-2 final, Thursday's Week 3 game frozen, Sunday's games open.
+  const joinMs = Date.UTC(2025, 8, 19, 12);
+  clock.now = joinMs;
+  ctx.sync_(true);
+  assert.throws(() => ctx.addPlayer(), /Raise CONFIG.PLAYER_COUNT/);
+  env.ctx.__exports.CONFIG.PLAYER_COUNT = 3;
+  ctx.addPlayer();
+  assert.throws(() => ctx.addPlayer(), /already 3 players/);
+  const players = JSON.parse(store.get('players'));
+  assert.deepStrictEqual(players.map(p => p.id), ['p1', 'p2', 'p3']);
+  assert.deepStrictEqual(players.slice(0, 2).map(p => p.token), [p1.token, p2.token], 'existing links unchanged');
+  const p3 = players[2];
+  assert.strictEqual(p3.joinedAtMs, joinMs);
+
+  const all = Object.values(ctx.loadGames_());
+  const frozenBeforeJoin = all.filter(g => ctx.freezeAtMs_(g) <= joinMs);
+  const openAtJoin = all.filter(g => ctx.freezeAtMs_(g) > joinMs);
+  assert(frozenBeforeJoin.some(g => g.week === 3) && openAtJoin.some(g => g.week === 3), 'Week 3 is split by the join');
+  openAtJoin.forEach(g => ctx.apiSetPick(p3.token, g.id, 'home'));
+  assert.throws(() => ctx.apiSetPick(p3.token, frozenBeforeJoin[0].id, 'home'), /frozen/);
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const summary = ctx.seasonSummary_(ctx.loadGames_(), ctx.loadAllPicks_(), players, clock.now);
+  const week = n => summary.weeks.find(w => w.week === n);
+
+  // Weeks 1-2 froze entirely before the join: p3 is not in them at all.
+  [1, 2].forEach(n => {
+    assert.deepStrictEqual([week(n).byPlayer.p3.played, week(n).byPlayer.p3.points, week(n).byPlayer.p3.missed], [false, 0, 0]);
+    assert(!week(n).winnerIds.includes('p3'), 'p3 cannot win week ' + n);
+    assert(week(n).winnerIds.length > 0);
+  });
+  // Week 3: p3 is in, but not in the games that froze before joining (not missed, not scored).
+  assert.strictEqual(week(3).byPlayer.p3.played, true);
+  assert.strictEqual(week(3).byPlayer.p3.missed, 0);
+  // p3 picked the same side as p1 on every game they were in, so their points differ exactly by those games.
+  const p1PointsBeforeJoin = frozenBeforeJoin.reduce((sum, g) => {
+    const view = ctx.gameView_(g, ctx.loadWeekPicks_(g.week), players, clock.now, null);
+    return sum + view.players.find(p => p.id === 'p1').score.points;
+  }, 0);
+  const totals = summary.totals;
+  assert.strictEqual(totals.p3.regular + totals.p3.playoffs, totals.p1.regular + totals.p1.playoffs - p1PointsBeforeJoin);
+  assert.strictEqual(totals.p3.missed, 0);
+
+  // Sheet: blank for p3 where they were not in the game or week.
+  const standings = env.ss.getSheetByName('Standings').rows();
+  assert.strictEqual(standings.find(r => r && r[0] === 'Week 1')[4], '');
+  const week3Rows = env.ss.getSheetByName('Week 3').rows();
+  const header = week3Rows.find(r => r && r[0] === 'Kickoff (US Central)');
+  const p3PickColumn = header.indexOf('Player 3 pick');
+  const p1PickColumn = header.indexOf('Player 1 pick');
+  const thursday = frozenBeforeJoin.find(g => g.week === 3);
+  const thursdayRow = week3Rows.find(r => r && r[2] === ctx.teamName_(thursday.away) + ' (' + thursday.away + ')');
+  assert.strictEqual(thursdayRow[p3PickColumn], '');
+  assert.strictEqual(thursdayRow[p1PickColumn], thursday.home);
+  const week1Total = env.ss.getSheetByName('Week 1').rows().find(r => r && String(r[0]).startsWith('Week total'));
+  assert.strictEqual(week1Total[header.indexOf('Player 3 pts')], '');
+
+  // Page: p3 is left out of week totals and game rows where they were not in.
+  const p1Week1 = ctx.apiGetState(p1.token, 1);
+  assert.deepStrictEqual(Array.from(p1Week1.totals, t => t.id), ['p1', 'p2']);
+  assert(p1Week1.games.every(g => g.players.find(p => p.id === 'p3').plays === false));
+  const p3Week3 = ctx.apiGetState(p3.token, 3);
+  assert.deepStrictEqual(Array.from(p3Week3.totals, t => t.id), ['p1', 'p2', 'p3']);
+  assert.strictEqual(p3Week3.games.find(g => g.id === thursday.id).players.find(p => p.id === 'p3').plays, false);
+});
+
+// ---------------------------------------------------------------- discord
+const HOOK = 'https://discord.test/webhook';
+const easternDate = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+const dayGames = (ctx, date) => Object.values(ctx.loadGames_()).filter(g => g.kickoffMs && easternDate(g.kickoffMs) === date)
+  .sort((a, b) => a.kickoffMs - b.kickoffMs);
+
+test('discord: nothing is posted or stored while DISCORD_WEBHOOK_URL is unset', () => {
+  const env = setupEnv(SAT);
+  env.clock.now = Date.UTC(2026, 9, 1);
+  env.ctx.sync_(true);
+  assert.strictEqual(env.net.posts.length, 0);
+  assert(!env.store.has('discord'));
+});
+
+test('discord reminder: 24h before a game day\'s first kickoff, names and counts only, once per day', () => {
+  const env = load({ now: Date.UTC(2026, 8, 25, 12), csv: REAL_CSV });
+  const { ctx, clock, store, net } = env;
+  store.set('DISCORD_WEBHOOK_URL', HOOK);
+  ctx.setup();
+  const [p1, p2, p3] = JSON.parse(store.get('players'));
+  ctx.apiSetName(p1.token, 'Al');
+  ctx.apiSetName(p2.token, 'Bob');
+  ctx.apiSetName(p3.token, 'Cy');
+  const sunday = dayGames(ctx, '2026-09-27');
+  sunday.forEach(g => ctx.apiSetPick(p1.token, g.id, 'home'));
+  ctx.apiSetLock(p1.token, 3, sunday[0].id);
+  ctx.apiSetPick(p2.token, sunday[0].id, 'away');
+  assert.strictEqual(net.posts.length, 0, 'Thursday\'s game froze before the webhook was set up: no reminder for it');
+
+  clock.now = sunday[0].kickoffMs - 24 * H - 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 0, 'not before 24h');
+
+  clock.now = sunday[0].kickoffMs - 24 * H + 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1);
+  const { url, payload } = net.posts[0];
+  assert.strictEqual(url, HOOK);
+  assert.deepStrictEqual(payload.allowed_mentions, { parse: [] });
+  const lines = payload.content.split('\n');
+  assert.match(lines[0], /^Next games: first kickoff Sun Sep 27, \d+:\d\d [AP]M US Central \/ .* Central Europe\.$/);
+  assert.strictEqual(lines[1], `Still to pick: Bob (${sunday.length - 1} games), Cy (${sunday.length} games)`);
+  assert.strictEqual(lines[2], 'No lock this week: Bob, Cy');
+  assert.strictEqual(lines.length, 3);
+  const teamCodes = new Set(sunday.flatMap(g => [g.home, g.away]));
+  assert(![...teamCodes].some(code => new RegExp('\\b' + code + '\\b').test(payload.content)), 'no teams, so no picks, in the post');
+
+  clock.now += 20 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1, 'one reminder per game day');
+
+  // Monday: everyone has picked it and holds a lock, so the reminder time passes without a post.
+  const monday = dayGames(ctx, '2026-09-28');
+  [p2, p3].forEach(p => {
+    monday.forEach(g => ctx.apiSetPick(p.token, g.id, 'away'));
+    ctx.apiSetLock(p.token, 3, monday[0].id);
+  });
+  monday.forEach(g => ctx.apiSetPick(p1.token, g.id, 'home'));
+  clock.now = monday[0].kickoffMs - 24 * H + 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1, 'nobody missing anything: no post');
+  assert(JSON.parse(store.get('discord')).remindedDays.includes('2026-09-28'));
+});
+
+test('discord results: posted when a week completes, retried after a failed post, no backlog when turned on late', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  const { ctx, clock, store, net } = env;
+  store.set('DISCORD_WEBHOOK_URL', HOOK);
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+  const results = () => net.posts.map(p => p.payload.content).filter(text => / final: /.test(text));
+
+  clock.now = Date.UTC(2025, 8, 10, 12); // Wednesday after Week 1
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 1);
+  const players = JSON.parse(store.get('players'));
+  const summary = ctx.seasonSummary_(ctx.loadGames_(), ctx.loadAllPicks_(), players, clock.now);
+  const week1 = summary.weeks.find(w => w.week === 1);
+  const pts = x => (x > 0 ? '+' : '') + x;
+  const [weekLine, seasonLine] = results()[0].split('\n');
+  assert(weekLine.startsWith('Week 1 final: '), weekLine);
+  players.forEach(p => {
+    assert(weekLine.includes(`${p.name} ${pts(week1.byPlayer[p.id].points)}`), weekLine);
+    assert(seasonLine.includes(`${p.name} ${pts(summary.totals[p.id].regular)}`), seasonLine);
+  });
+  assert(seasonLine.startsWith('Regular season: '), seasonLine);
+
+  // Week 2 completes while Discord is failing: the sync still saves, and the post comes on the next sync.
+  net.postStatus = 500;
+  clock.now = Date.UTC(2025, 8, 17, 12);
+  ctx.sync_(true);
+  assert.strictEqual(ctx.loadSyncStatus_().ok, true);
+  assert(Object.values(ctx.loadGames_()).filter(g => g.week === 2).every(g => g.snap && g.result !== null), 'Week 2 saved as final');
+  assert.strictEqual(results().length, 2, 'the failed attempt was sent once');
+  assert(!JSON.parse(store.get('discord')).postedWeeks.includes(2));
+  net.postStatus = 204;
+  clock.now += 15 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 3);
+  assert(results()[2].startsWith('Week 2 final: '));
+  clock.now += 15 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 3, 'each week posted once');
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const last = results()[results().length - 1];
+  assert(last.startsWith('Super Bowl final: '), last);
+  assert(last.split('\n')[1].startsWith('Full season: '), last);
+
+  // Turned on after weeks are complete: those weeks are not posted.
+  const late = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  late.ctx.setup();
+  late.clock.now = Date.UTC(2025, 10, 1);
+  late.ctx.sync_(true);
+  late.store.set('DISCORD_WEBHOOK_URL', HOOK);
+  late.clock.now += 15 * 60 * 1000;
+  late.ctx.sync_(true);
+  assert.strictEqual(late.net.posts.filter(p => / final: /.test(p.payload.content)).length, 0);
+  assert(JSON.parse(late.store.get('discord')).postedWeeks.includes(8));
 });
 
 // ---------------------------------------------------------------- security and input handling
@@ -453,6 +677,41 @@ test('cancelled game (missing from a full download) is voided and excluded; reap
   assert(ctx.apiGetState(p1.token, 3).games.some(g => g.id === gone));
 });
 
+test('standings name regular-season and full-season champions; the playoffs row never names a leader', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  const { ctx, clock, store } = env;
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+  const leaderCells = () => {
+    const standings = env.ss.getSheetByName('Standings').rows();
+    // [status, leader]: leader is the last column, after one points column per player.
+    return ['Regular season', 'Playoffs', 'Full season'].map(label => {
+      const row = standings.find(r => r && r[0] === label);
+      return [row[1], row[row.length - 1]];
+    });
+  };
+
+  clock.now = Date.UTC(2026, 0, 18, 20); // Divisional weekend: regular season final, playoffs under way
+  ctx.sync_(true);
+  const [regular, playoffs, full] = leaderCells();
+  assert.strictEqual(regular[0], 'Final');
+  assert.match(regular[1], / \(champion\)$|^Tie$/);
+  assert.deepStrictEqual(playoffs, ['In progress', '']);
+  assert.strictEqual(full[0], 'In progress');
+  assert.match(full[1], / \(leading\)$|^Tied$/);
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const [, finalPlayoffs, finalFull] = leaderCells();
+  assert.deepStrictEqual(finalPlayoffs, ['Final', '']);
+  assert.strictEqual(finalFull[0], 'Final');
+  assert.match(finalFull[1], / \(champion\)$|^Tie$/);
+});
+
 test('a voided game does not block week completion or champions', () => {
   const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
   env.ctx.setup();
@@ -470,8 +729,8 @@ test('only intended functions are publicly callable (no trailing underscore)', (
   const { ctx } = load();
   const pub = Object.keys(ctx).filter(k => typeof ctx[k] === 'function' && !k.endsWith('_') &&
     !['console'].includes(k) && !/^[A-Z]/.test(k)).sort();
-  assert.deepStrictEqual(pub, ['apiGetState', 'apiSetLock', 'apiSetName', 'apiSetPick', 'doGet', 'printLinks',
-    'resetP1Link', 'resetP2Link', 'resetPlayerLink', 'setup', 'syncNow', 'syncTrigger'].sort());
+  assert.deepStrictEqual(pub, ['addPlayer', 'apiGetState', 'apiSetLock', 'apiSetName', 'apiSetPick', 'doGet', 'printLinks',
+    'resetP1Link', 'resetP2Link', 'resetP3Link', 'resetPlayerLink', 'setup', 'syncNow', 'syncTrigger'].sort());
 });
 
 test('owner-only functions also refuse a different signed-in account', () => {

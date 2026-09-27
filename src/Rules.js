@@ -2,7 +2,7 @@
  * Pure game-state rules: freezing, pick validation, lock validation.
  */
 
-/** Epoch ms at which picks and the spread freeze, or null if kickoff is unknown. */
+/** Epoch ms at which picks and the line freeze, or null if kickoff is unknown. */
 function freezeAtMs_(game) {
   if (game.kickoffMs === null || game.kickoffMs === undefined) return null;
   return game.kickoffMs - CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF * 60 * 1000;
@@ -15,51 +15,73 @@ function freezeAtMs_(game) {
  */
 function isFrozen_(game, nowMs) {
   if (game.snap) return true;
-  const f = freezeAtMs_(game);
-  return f !== null && nowMs >= f;
+  const freezeAtMs = freezeAtMs_(game);
+  if (freezeAtMs === null) return false;
+  return nowMs >= freezeAtMs;
 }
 
+/**
+ * Whether a player takes part in a game. A player added mid-season (addPlayer) is not in the
+ * games that froze before they joined: those are neither missed nor scored for them.
+ * @param {Player} player
+ * @param {Game} game
+ */
+function playsGame_(player, game) {
+  if (!player.joinedAtMs) return true;
+  const freezeAtMs = freezeAtMs_(game);
+  if (freezeAtMs === null) return true;
+  return freezeAtMs > player.joinedAtMs;
+}
+
+/** @return {PlayerPicks} */
 function emptyPlayerPicks_() {
   return { picks: {}, lock: null };
 }
 
 /**
  * Validate and apply a pick change. Mutates `mine`.
- * @param {Object} game
- * @param {Object} mine   this player's {picks, lock} for the game's week
- * @param {?string} side  'home' | 'away' | null to clear
+ * @param {Game} game
+ * @param {PlayerPicks} mine  this player's picks for the game's week
+ * @param {?string} side      a Side, or null to clear the pick (which also clears its lock)
  */
 function applyPick_(game, mine, side, nowMs) {
-  if (side !== 'home' && side !== 'away' && side !== null) throw new Error('Invalid side.');
-  if (isFrozen_(game, nowMs)) throw new Error('This game is frozen. Picks closed 1 hour before kickoff.');
+  const allowedSides = [Side.HOME, Side.AWAY, null];
+  if (!allowedSides.includes(side)) throw new Error('Invalid side.');
+  if (isFrozen_(game, nowMs)) {
+    throw new Error(`This game is frozen. Picks closed ${CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF} minutes before kickoff.`);
+  }
+
   if (side === null) {
     delete mine.picks[game.id];
     if (mine.lock === game.id) mine.lock = null;
-  } else {
-    mine.picks[game.id] = side;
+    return;
   }
+  mine.picks[game.id] = side;
 }
 
 /**
  * Validate and apply a lock change. Mutates `mine`.
- * @param {Object<string,Object>} weekGames  id -> game, all games of that week
- * @param {Object} mine
- * @param {?string} gameId  new lock target, or null to remove the lock
+ * @param {Object<string, Game>} weekGames  id -> game, every live game of that week
+ * @param {string} weekType                 the week's GameType
+ * @param {PlayerPicks} mine
+ * @param {?string} gameId                  new lock target, or null to remove the lock
  */
 function applyLock_(weekGames, weekType, mine, gameId, nowMs) {
   if (!roundInfo_(weekType).locks) throw new Error('Locks are not used in this round.');
-  const has = function (id) { return Object.prototype.hasOwnProperty.call(weekGames, id); };
-  const current = mine.lock && has(mine.lock) ? weekGames[mine.lock] : null;
-  if (current && isFrozen_(current, nowMs)) {
+
+  // gameId comes from the browser; an own-property check keeps names like "constructor" out.
+  const inWeek = (id) => Object.prototype.hasOwnProperty.call(weekGames, id);
+  const currentLockGame = inWeek(mine.lock) ? weekGames[mine.lock] : null;
+  if (currentLockGame && isFrozen_(currentLockGame, nowMs)) {
     throw new Error('Your lock is on a game that has already frozen, so it can no longer move.');
   }
   if (gameId === null) {
     mine.lock = null;
     return;
   }
-  const target = has(gameId) ? weekGames[gameId] : null;
-  if (!target) throw new Error('That game is not in this week.');
-  if (isFrozen_(target, nowMs)) throw new Error('That game is frozen.');
+
+  if (!inWeek(gameId)) throw new Error('That game is not in this week.');
+  if (isFrozen_(weekGames[gameId], nowMs)) throw new Error('That game is frozen.');
   if (!mine.picks[gameId]) throw new Error('Pick a team in that game before locking it.');
   mine.lock = gameId;
 }

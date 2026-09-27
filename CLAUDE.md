@@ -23,12 +23,15 @@ it over.
   freezes. The sheet may show "picked" before freeze; the pick page does not.
 - Weekly and season ties are recorded as ties; no tiebreakers.
 - Champions: regular season, and full season including playoffs.
+- A player added mid-season (`addPlayer`) is not in games that froze before they joined: not
+  missed, not scored, and not a contender for a week that froze entirely before they joined.
 
 ## Architecture
 
 | Concern | Where |
 |---|---|
 | Every tunable value | `src/Config.js` |
+| Closed sets of stored values (sides, score statuses, game types, line sources) | `src/Constants.js` |
 | Point values and scoring one pick | `src/Scoring.js` |
 | Freeze time, pick and lock validation | `src/Rules.js` |
 | Parsing nflverse, freezing, line snapshot, voiding cancelled games | `src/Schedule.js` |
@@ -36,6 +39,7 @@ it over.
 | Who can call what | `src/WebApp.js` (`api*`, token check), `src/Setup.js` (`assertOwner_`) |
 | Storage (Script Properties) | `src/Store.js` |
 | 15-minute sync | `src/Sync.js` |
+| Discord reminders and results | `src/Discord.js` |
 | Sheet tabs | `src/Render.js` |
 | Pick page | `src/Index.html` (layout), `src/Styles.html`, `src/Client.html` |
 

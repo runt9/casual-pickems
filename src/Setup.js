@@ -15,11 +15,10 @@ function assertOwner_() {
 /** One-time setup: players, trigger, first sync. Safe to re-run; it never replaces existing tokens. */
 function setup() {
   assertOwner_();
-  let players = loadPlayers_();
-  if (!players.length) {
-    players = [];
-    for (let i = 1; i <= CONFIG.PLAYER_COUNT; i++) {
-      players.push({ id: 'p' + i, token: Utilities.getUuid(), name: 'Player ' + i });
+  if (!loadPlayers_().length) {
+    const players = [];
+    for (let number = 1; number <= CONFIG.PLAYER_COUNT; number++) {
+      players.push({ id: `p${number}`, token: Utilities.getUuid(), name: `Player ${number}` });
     }
     savePlayers_(players);
   }
@@ -29,9 +28,9 @@ function setup() {
 }
 
 function installTrigger_() {
-  ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'syncTrigger') ScriptApp.deleteTrigger(t);
-  });
+  ScriptApp.getProjectTriggers()
+    .filter((trigger) => trigger.getHandlerFunction() === 'syncTrigger')
+    .forEach((trigger) => ScriptApp.deleteTrigger(trigger));
   ScriptApp.newTrigger('syncTrigger').timeBased().everyMinutes(CONFIG.SYNC_EVERY_MINUTES).create();
 }
 
@@ -41,13 +40,13 @@ function installTrigger_() {
  */
 function printLinks() {
   assertOwner_();
-  const url = props_().getProperty('WEB_APP_URL');
-  if (!url || !/\/exec$/.test(url)) {
+  const url = props_().getProperty(PropertyKey.WEB_APP_URL);
+  if (!url || !url.endsWith('/exec')) {
     Logger.log('Set script property WEB_APP_URL to your web app URL ending in /exec, then run printLinks again.');
     return;
   }
-  loadPlayers_().forEach(function (p) {
-    Logger.log('%s (%s): %s?t=%s', p.id, p.name, url, p.token);
+  loadPlayers_().forEach((player) => {
+    Logger.log('%s (%s): %s?t=%s', player.id, player.name, url, player.token);
   });
 }
 
@@ -55,15 +54,36 @@ function printLinks() {
 function resetPlayerLink(playerId) {
   assertOwner_();
   const players = loadPlayers_();
-  const p = players.filter(function (x) { return x.id === playerId; })[0];
-  if (!p) throw new Error('No player ' + playerId + '. Edit the argument, e.g. resetPlayerLink("p2").');
-  p.token = Utilities.getUuid();
+  const player = players.find((stored) => stored.id === playerId);
+  if (!player) throw new Error(`No player ${playerId}. Edit the argument, e.g. resetPlayerLink("p2").`);
+  player.token = Utilities.getUuid();
   savePlayers_(players);
   printLinks();
 }
 
 function resetP1Link() { resetPlayerLink('p1'); }
 function resetP2Link() { resetPlayerLink('p2'); }
+function resetP3Link() { resetPlayerLink('p3'); }
+
+/**
+ * Adds one player to a running season and logs every link; existing links do not change.
+ * The new player is not in games that froze before now (playsGame_). Refuses once
+ * CONFIG.PLAYER_COUNT players exist, so running it twice by mistake cannot add a spare.
+ */
+function addPlayer() {
+  assertOwner_();
+  withScriptLock_(() => {
+    const players = loadPlayers_();
+    if (players.length >= CONFIG.PLAYER_COUNT) {
+      throw new Error(`There are already ${players.length} players. Raise CONFIG.PLAYER_COUNT first to add another.`);
+    }
+    const number = players.length + 1;
+    players.push({ id: `p${number}`, token: Utilities.getUuid(), name: `Player ${number}`, joinedAtMs: now_() });
+    savePlayers_(players);
+  });
+  sync_(true);
+  printLinks();
+}
 
 /** Force a sync now, ignoring the throttle. */
 function syncNow() {

@@ -6,8 +6,8 @@ const vm = require('vm');
 const crypto = require('crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
-const FILES = ['Config.js', 'Scoring.js', 'Rules.js', 'Schedule.js', 'Store.js', 'Teams.js', 'Model.js',
-  'Sync.js', 'Render.js', 'WebApp.js', 'Setup.js'];
+const FILES = ['Constants.js', 'Config.js', 'Scoring.js', 'Rules.js', 'Schedule.js', 'Store.js', 'Teams.js', 'Model.js',
+  'Sync.js', 'Render.js', 'Discord.js', 'WebApp.js', 'Setup.js'];
 
 function tzOffsetMs(ms, tz) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -104,7 +104,8 @@ function load(opts) {
   const logs = [];
   const clock = { now: opts.now || Date.now() };
   const session = { active: opts.activeUser === undefined ? 'owner@example.com' : opts.activeUser, effective: 'owner@example.com' };
-  const net = { csv: opts.csv || '', status: 200, fetches: 0 };
+  // posts: Discord webhook calls ({url, payload}); postStatus is what the webhook answers.
+  const net = { csv: opts.csv || '', status: 200, fetches: 0, posts: [], postStatus: 204 };
   const lockState = { held: false, sheetWritesWhileLocked: 0 };
   ss.lockState = lockState;
 
@@ -125,7 +126,14 @@ function load(opts) {
       }),
     },
     UrlFetchApp: {
-      fetch: () => { net.fetches++; return { getResponseCode: () => net.status, getContentText: () => net.csv }; },
+      fetch: (url, options) => {
+        if (options && options.method === 'post') {
+          net.posts.push({ url, payload: JSON.parse(options.payload) });
+          return { getResponseCode: () => net.postStatus, getContentText: () => '' };
+        }
+        net.fetches++;
+        return { getResponseCode: () => net.status, getContentText: () => net.csv };
+      },
     },
     Utilities: {
       parseCsv,
@@ -135,9 +143,17 @@ function load(opts) {
         if (!m) throw new Error('unparseable ' + s);
         return new Date(zonedToUtc(+m[1], +m[2], +m[3], +m[4], +m[5], tz));
       },
-      formatDate: (d, tz) => new Intl.DateTimeFormat('en-US', {
-        timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-      }).format(d),
+      // Real formatDate uses Java SimpleDateFormat. Only the patterns the source uses are faked:
+      // 'EEE MMM d, h:mm a' -> "Sun Sep 27, 12:00 PM"; 'yyyy-MM-dd' -> "2026-09-27".
+      formatDate: (d, tz, fmt) => {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz, year: 'numeric', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true,
+        }).formatToParts(d);
+        const get = t => parts.find(p => p.type === t).value;
+        if (fmt === 'EEE MMM d, h:mm a') return `${get('weekday')} ${get('month')} ${get('day')}, ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
+        if (fmt === 'yyyy-MM-dd') return new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(d);
+        throw new Error('unexpected format ' + fmt);
+      },
       getUuid: () => crypto.randomUUID(),
     },
     SpreadsheetApp: { getActiveSpreadsheet: () => ss },

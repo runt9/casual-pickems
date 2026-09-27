@@ -8,10 +8,10 @@
 <script>
   // --------------------------------------------------------------- constants
 
-  /** Must match the side values the server stores ('home' / 'away'). */
+  /** Must match Side in Constants.js. */
   const Side = Object.freeze({ HOME: 'home', AWAY: 'away' });
 
-  /** Must match scorePick_ statuses in Scoring.js. */
+  /** Must match ScoreStatus in Constants.js. */
   const ScoreStatus = Object.freeze({ NO_PICK: 'nopick', PENDING: 'pending', TIE: 'tie', WIN: 'win', LOSS: 'loss' });
 
   const REDRAW_INTERVAL_MS = 30 * 1000;       // countdowns, and noticing a game has frozen
@@ -213,7 +213,8 @@
 
   function buildRulesNote() {
     const playoffNote = weekState.multiplier > 1 ? `Playoff round: all points x${weekState.multiplier}, no locks. ` : '';
-    const hiddenNote = 'Lines and point values stay hidden until each game freezes, 1 hour before kickoff.';
+    const freezeMinutes = weekState.freezeMinutesBeforeKickoff;
+    const hiddenNote = `Lines and point values stay hidden until each game freezes, ${freezeMinutes} minutes before kickoff.`;
     return createElement('div', { class: 'rules-note' }, playoffNote, hiddenNote);
   }
 
@@ -289,7 +290,7 @@
       createElement('div', { class: 'game-meta' },
         createElement('span', {}, `Line: ${formatLine(game)}`),
         valuesText ? createElement('span', {}, valuesText) : null),
-      game.players.map((player) => buildPlayerResultRow(game, player)));
+      game.players.filter((player) => player.plays).map((player) => buildPlayerResultRow(game, player)));
   }
 
   /** "ATL 35 - 14 GB", "In progress", or "Frozen, kicks off Sun, Sep 27, 12:00 PM". */

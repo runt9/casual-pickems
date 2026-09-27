@@ -26,6 +26,8 @@ const CONFIG = {
 
   LOCK_MULTIPLIER: 2,
   // nflverse game_type -> round multiplier and whether a lock may be used.
+  // Keys are GameType values (Constants.js), written out because top-level code here cannot
+  // rely on another file having loaded.
   ROUNDS: {
     REG: { label: 'Week', multiplier: 1, locks: true },
     WC:  { label: 'Wild Card', multiplier: 2, locks: false },
@@ -53,12 +55,16 @@ const CONFIG = {
     DOG_WIN_CAP: 20,
   },
 
-  // Kickoff time columns on the shared sheet.
+  // Discord reminder: this long before the first kickoff of each game day (Discord.js).
+  DISCORD_REMINDER_HOURS_BEFORE_FIRST_KICKOFF: 24,
+
+  // Kickoff time columns on the shared sheet (also used in Discord reminders).
   SHEET_TIMEZONES: [
     { label: 'US Central', tz: 'America/Chicago' },
     { label: 'Central Europe', tz: 'Europe/Berlin' },
   ],
 
-  PLAYER_COUNT: 2,
+  // Players setup creates on a fresh install, and the most addPlayer allows on a running one.
+  PLAYER_COUNT: 3,
   MAX_NAME_LENGTH: 20,
 };

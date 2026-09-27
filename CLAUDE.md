@@ -39,6 +39,7 @@ it over.
 | Who can call what | `src/WebApp.js` (`api*`, token check), `src/Setup.js` (`assertOwner_`) |
 | Storage (Script Properties) | `src/Store.js` |
 | 15-minute sync | `src/Sync.js` |
+| Discord reminders and results | `src/Discord.js` |
 | Sheet tabs | `src/Render.js` |
 | Pick page | `src/Index.html` (layout), `src/Styles.html`, `src/Client.html` |
 

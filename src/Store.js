@@ -8,7 +8,9 @@
  *   p:<week>       WeekPicks
  *   sync           SyncStatus
  *   render         Object<tabName, hash>     content hash of each sheet tab as last drawn (Render.js)
- *   WEB_APP_URL    the web app's /exec URL, set by hand (Setup.js printLinks)
+ *   discord        DiscordState              what has been posted to Discord (Discord.js)
+ *   WEB_APP_URL          the web app's /exec URL, set by hand (Setup.js printLinks)
+ *   DISCORD_WEBHOOK_URL  Discord webhook, set by hand; a secret, never in the repo (Discord.js)
  */
 const PropertyKey = Object.freeze({
   PLAYERS: 'players',
@@ -16,7 +18,9 @@ const PropertyKey = Object.freeze({
   PICKS_PREFIX: 'p:',
   SYNC: 'sync',
   RENDER: 'render',
+  DISCORD: 'discord',
   WEB_APP_URL: 'WEB_APP_URL',
+  DISCORD_WEBHOOK_URL: 'DISCORD_WEBHOOK_URL',
 });
 
 /** Script Properties rejects values over 9 KB; failing here names the key that grew too big. */

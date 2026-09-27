@@ -55,7 +55,10 @@ const CONFIG = {
     DOG_WIN_CAP: 20,
   },
 
-  // Kickoff time columns on the shared sheet.
+  // Discord reminder: this long before the first kickoff of each game day (Discord.js).
+  DISCORD_REMINDER_HOURS_BEFORE_FIRST_KICKOFF: 24,
+
+  // Kickoff time columns on the shared sheet (also used in Discord reminders).
   SHEET_TIMEZONES: [
     { label: 'US Central', tz: 'America/Chicago' },
     { label: 'Central Europe', tz: 'Europe/Berlin' },

@@ -471,6 +471,132 @@ test('third player added mid-season: existing links kept, not in games frozen be
   assert.strictEqual(p3Week3.games.find(g => g.id === thursday.id).players.find(p => p.id === 'p3').plays, false);
 });
 
+// ---------------------------------------------------------------- discord
+const HOOK = 'https://discord.test/webhook';
+const easternDate = ms => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(ms));
+const dayGames = (ctx, date) => Object.values(ctx.loadGames_()).filter(g => g.kickoffMs && easternDate(g.kickoffMs) === date)
+  .sort((a, b) => a.kickoffMs - b.kickoffMs);
+
+test('discord: nothing is posted or stored while DISCORD_WEBHOOK_URL is unset', () => {
+  const env = setupEnv(SAT);
+  env.clock.now = Date.UTC(2026, 9, 1);
+  env.ctx.sync_(true);
+  assert.strictEqual(env.net.posts.length, 0);
+  assert(!env.store.has('discord'));
+});
+
+test('discord reminder: 24h before a game day\'s first kickoff, names and counts only, once per day', () => {
+  const env = load({ now: Date.UTC(2026, 8, 25, 12), csv: REAL_CSV });
+  const { ctx, clock, store, net } = env;
+  store.set('DISCORD_WEBHOOK_URL', HOOK);
+  ctx.setup();
+  const [p1, p2, p3] = JSON.parse(store.get('players'));
+  ctx.apiSetName(p1.token, 'Al');
+  ctx.apiSetName(p2.token, 'Bob');
+  ctx.apiSetName(p3.token, 'Cy');
+  const sunday = dayGames(ctx, '2026-09-27');
+  sunday.forEach(g => ctx.apiSetPick(p1.token, g.id, 'home'));
+  ctx.apiSetLock(p1.token, 3, sunday[0].id);
+  ctx.apiSetPick(p2.token, sunday[0].id, 'away');
+  assert.strictEqual(net.posts.length, 0, 'Thursday\'s game froze before the webhook was set up: no reminder for it');
+
+  clock.now = sunday[0].kickoffMs - 24 * H - 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 0, 'not before 24h');
+
+  clock.now = sunday[0].kickoffMs - 24 * H + 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1);
+  const { url, payload } = net.posts[0];
+  assert.strictEqual(url, HOOK);
+  assert.deepStrictEqual(payload.allowed_mentions, { parse: [] });
+  const lines = payload.content.split('\n');
+  assert.match(lines[0], /^Next games: first kickoff Sun Sep 27, \d+:\d\d [AP]M US Central \/ .* Central Europe\.$/);
+  assert.strictEqual(lines[1], `Still to pick: Bob (${sunday.length - 1} games), Cy (${sunday.length} games)`);
+  assert.strictEqual(lines[2], 'No lock this week: Bob, Cy');
+  assert.strictEqual(lines.length, 3);
+  const teamCodes = new Set(sunday.flatMap(g => [g.home, g.away]));
+  assert(![...teamCodes].some(code => new RegExp('\\b' + code + '\\b').test(payload.content)), 'no teams, so no picks, in the post');
+
+  clock.now += 20 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1, 'one reminder per game day');
+
+  // Monday: everyone has picked it and holds a lock, so the reminder time passes without a post.
+  const monday = dayGames(ctx, '2026-09-28');
+  [p2, p3].forEach(p => {
+    monday.forEach(g => ctx.apiSetPick(p.token, g.id, 'away'));
+    ctx.apiSetLock(p.token, 3, monday[0].id);
+  });
+  monday.forEach(g => ctx.apiSetPick(p1.token, g.id, 'home'));
+  clock.now = monday[0].kickoffMs - 24 * H + 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(net.posts.length, 1, 'nobody missing anything: no post');
+  assert(JSON.parse(store.get('discord')).remindedDays.includes('2026-09-28'));
+});
+
+test('discord results: posted when a week completes, retried after a failed post, no backlog when turned on late', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  const { ctx, clock, store, net } = env;
+  store.set('DISCORD_WEBHOOK_URL', HOOK);
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+  const results = () => net.posts.map(p => p.payload.content).filter(text => / final: /.test(text));
+
+  clock.now = Date.UTC(2025, 8, 10, 12); // Wednesday after Week 1
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 1);
+  const players = JSON.parse(store.get('players'));
+  const summary = ctx.seasonSummary_(ctx.loadGames_(), ctx.loadAllPicks_(), players, clock.now);
+  const week1 = summary.weeks.find(w => w.week === 1);
+  const pts = x => (x > 0 ? '+' : '') + x;
+  const [weekLine, seasonLine] = results()[0].split('\n');
+  assert(weekLine.startsWith('Week 1 final: '), weekLine);
+  players.forEach(p => {
+    assert(weekLine.includes(`${p.name} ${pts(week1.byPlayer[p.id].points)}`), weekLine);
+    assert(seasonLine.includes(`${p.name} ${pts(summary.totals[p.id].regular)}`), seasonLine);
+  });
+  assert(seasonLine.startsWith('Regular season: '), seasonLine);
+
+  // Week 2 completes while Discord is failing: the sync still saves, and the post comes on the next sync.
+  net.postStatus = 500;
+  clock.now = Date.UTC(2025, 8, 17, 12);
+  ctx.sync_(true);
+  assert.strictEqual(ctx.loadSyncStatus_().ok, true);
+  assert(Object.values(ctx.loadGames_()).filter(g => g.week === 2).every(g => g.snap && g.result !== null), 'Week 2 saved as final');
+  assert.strictEqual(results().length, 2, 'the failed attempt was sent once');
+  assert(!JSON.parse(store.get('discord')).postedWeeks.includes(2));
+  net.postStatus = 204;
+  clock.now += 15 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 3);
+  assert(results()[2].startsWith('Week 2 final: '));
+  clock.now += 15 * 60 * 1000;
+  ctx.sync_(true);
+  assert.strictEqual(results().length, 3, 'each week posted once');
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const last = results()[results().length - 1];
+  assert(last.startsWith('Super Bowl final: '), last);
+  assert(last.split('\n')[1].startsWith('Full season: '), last);
+
+  // Turned on after weeks are complete: those weeks are not posted.
+  const late = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  late.ctx.setup();
+  late.clock.now = Date.UTC(2025, 10, 1);
+  late.ctx.sync_(true);
+  late.store.set('DISCORD_WEBHOOK_URL', HOOK);
+  late.clock.now += 15 * 60 * 1000;
+  late.ctx.sync_(true);
+  assert.strictEqual(late.net.posts.filter(p => / final: /.test(p.payload.content)).length, 0);
+  assert(JSON.parse(late.store.get('discord')).postedWeeks.includes(8));
+});
+
 // ---------------------------------------------------------------- security and input handling
 test('owner-only functions refuse anonymous (web app) callers', () => {
   const env = load({ now: SAT, csv: REAL_CSV, activeUser: '' });

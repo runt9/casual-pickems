@@ -54,7 +54,15 @@ function sync_(force) {
       : { atMs: nowMs, ok: false, error };
     saveSyncStatus_(status);
 
-    renderInput = { games, allPicks: loadAllPicks_(), players: loadPlayers_(), nowMs };
+    const allPicks = loadAllPicks_();
+    const players = loadPlayers_();
+    try {
+      notifyDiscord_(games, allPicks, players, nowMs);
+    } catch (err) {
+      // Games are already saved; the failed post was not recorded, so the next sync retries it.
+      console.error(`Discord: ${err && err.message}`);
+    }
+    renderInput = { games, allPicks, players, nowMs };
   } finally {
     lock.releaseLock();
   }

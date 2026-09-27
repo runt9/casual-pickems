@@ -17,6 +17,7 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 | `src/Model.js` | View models; the single place pick visibility is decided |
 | `src/Sync.js` | 15-minute trigger: fetch, freeze, save, render |
 | `src/Render.js` | Standings tab and week tabs |
+| `src/Discord.js` | Discord reminders and weekly results through a webhook (off until `DISCORD_WEBHOOK_URL` is set) |
 | `src/WebApp.js` | `doGet` and the `api*` functions the pick page calls |
 | `src/Setup.js` | Owner-only: `setup`, `addPlayer`, `printLinks`, `resetP1Link`/`resetP2Link`/`resetP3Link`, `syncNow` |
 | `src/Index.html` | Pick page layout; pulls in the two files below with `include_()` |
@@ -72,6 +73,16 @@ The default `Sheet1` tab can be deleted.
   moving tabs by hand sticks. Text cells are written as plain text so Sheets does not turn values
   like "2-1" into dates. Manual edits to a tab are overwritten the next time its content changes.
 - **Sync throttle:** at most one sync per minute, counting failed attempts.
+- **Discord:** add Script Property `DISCORD_WEBHOOK_URL` (the webhook's URL; keep it out of the repo)
+  to turn posts on; delete it to turn them off. Posts go to the webhook's channel and carry names and
+  totals only, never picks:
+  - *Reminder* 24 hours before the first kickoff of each game day (US Eastern date), naming anyone
+    with an unpicked open game that day (with a count) and anyone without a lock in a regular-season
+    week. Nothing is posted if nobody is missing anything. The 15-minute sync posts it within
+    15 minutes of that time.
+  - *Results* as soon as a week is complete: each player's week points, the winner, and the regular
+    season (or, in the playoffs, full season) totals. Weeks already complete when the webhook is
+    first set are not posted. A failed post is retried on the next sync.
 - **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friends cannot.
 
 ## Rules as implemented

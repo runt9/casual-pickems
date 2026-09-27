@@ -94,21 +94,27 @@ The default `Sheet1` tab can be deleted.
 
 ## Tests
 
+The tests read nflverse `games.csv`, which is not in this repo. From the repo root:
+
 ```
+git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
 cd test
-GAMES_CSV=/path/to/nflverse/games.csv node run.js
+node run.js
+node ui.js
 ```
+
+Both read `../nflverse/nfldata/data/games.csv` (relative to the repo root) by default; set
+`GAMES_CSV` to use a different copy.
 
 `run.js` covers: scoring parity with an independent Python implementation for every half-point
 spread 0-30; the agreed point table; monotonicity; freeze and snapshot behavior (including line
 moves after the freeze, late install, missing lines, kickoff changes); pick and lock rules; a
 full Week 3 on real 2026 data; pick privacy on both the page and the sheet; a full 2025
 regular season + playoff replay checked against an independent calculation; owner-only
-guards; token validation; name sanitizing (including formula injection); fetch failure; and the
-sync throttle.
+guards; token validation; name sanitizing (including formula injection); fetch failure; the
+sync throttle; and kickoff and freeze times on the sheet.
 
-`ui.js` (needs Playwright) assembles the pick page the way Apps Script does, renders it in headless
-Chromium against the same fakes, and checks picking, locking, clearing a pick, the no-lock banner,
-the other player's status, and the frozen view. Run it the same way: `node ui.js`.
-
-Get `games.csv` from https://github.com/nflverse/nfldata/blob/master/data/games.csv
+`ui.js` assembles the pick page the way Apps Script does, renders it in headless Chromium against
+the same fakes, and checks picking, locking, clearing a pick, the no-lock banner, the other
+player's status, and the frozen view. It loads Playwright from the global npm root
+(`npm i -g playwright`).

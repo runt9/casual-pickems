@@ -27,6 +27,7 @@ const MAX_PROPERTY_BYTES_ = 9000;
  * @property {string} id      'p1', 'p2', ...
  * @property {string} token   UUID in the player's link (?t=); their only credential
  * @property {string} name    display name, cleaned by cleanName_
+ * @property {number} [joinedAtMs]  set when added mid-season by addPlayer; see playsGame_
  */
 
 /**

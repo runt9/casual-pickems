@@ -42,10 +42,12 @@ function renderSheets_(games, allPicks, players, nowMs) {
     drawnHashes[tabName] = hash;
   };
 
-  draw(STANDINGS_SHEET_, standingsLayout_(season, players, nowMs), 0);
+  const standings = standingsLayout_(season, players, nowMs);
+  draw(STANDINGS_SHEET_, standings, 0);
   season.weeks.forEach((week) => {
     const gamesOfWeek = weekGames_(games, week.week);
-    draw(week.label, weekLayout_(week, gamesOfWeek, allPicks[week.week] || {}, players, nowMs));
+    const layout = weekLayout_(week, gamesOfWeek, allPicks[week.week] || {}, players, nowMs);
+    draw(week.label, layout);
   });
   writeJson_(PropertyKey.RENDER, drawnHashes);
 }

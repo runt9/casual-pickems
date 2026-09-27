@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The tests read nflverse games.csv from ../nflverse/nfldata (see CLAUDE.md, Testing).
+      # This is the live file, so an upstream schedule change can fail a test without a code change.
+      - name: Get test data
+        run: git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
+
+      - name: Unit and end-to-end tests
+        run: node test/run.js
+
+      # ui.js loads Playwright from the global npm root.
+      - name: Install Playwright and Chromium
+        run: |
+          npm install -g playwright
+          playwright install --with-deps chromium
+
+      - name: Pick page tests
+        run: node test/ui.js

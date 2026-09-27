@@ -23,6 +23,8 @@ it over.
   freezes. The sheet may show "picked" before freeze; the pick page does not.
 - Weekly and season ties are recorded as ties; no tiebreakers.
 - Champions: regular season, and full season including playoffs.
+- A player added mid-season (`addPlayer`) is not in games that froze before they joined: not
+  missed, not scored, and not a contender for a week that froze entirely before they joined.
 
 ## Architecture
 

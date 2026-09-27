@@ -21,7 +21,7 @@
  * @property {number} freezeMinutesBeforeKickoff       CONFIG value, for the page's rules note
  * @property {?string} myLock                          gameId of this player's lock
  * @property {Array<GameView>} games                   each also has awayName and homeName (team nicknames)
- * @property {Array<{id: string, name: string, points: number}>} totals   frozen games only
+ * @property {Array<{id: string, name: string, points: number}>} totals   frozen games only; players in the week only
  * @property {boolean} complete
  * @property {Array<string>} winnerIds
  */
@@ -183,6 +183,7 @@ function buildState_(player, games, week, nowMs) {
   const mine = weekPicks[player.id] || emptyPlayerPicks_();
   const round = shownWeek ? roundInfo_(shownWeek.type) : null;
   const others = players.filter((other) => other.id !== player.id);
+  const playersInWeek = players.filter((weekPlayer) => summary.byPlayer[weekPlayer.id].played);
   const gameForPage = (game) => ({
     ...gameView_(game, weekPicks, players, nowMs, player.id),
     awayName: teamName_(game.away),
@@ -201,7 +202,7 @@ function buildState_(player, games, week, nowMs) {
     freezeMinutesBeforeKickoff: CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF,
     myLock: mine.lock,
     games: gamesOfWeek.map(gameForPage),
-    totals: players.map(({ id, name }) => ({ id, name, points: summary.byPlayer[id].points })),
+    totals: playersInWeek.map(({ id, name }) => ({ id, name, points: summary.byPlayer[id].points })),
     complete: summary.complete,
     winnerIds: summary.winnerIds,
   };

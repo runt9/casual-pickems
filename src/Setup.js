@@ -63,6 +63,27 @@ function resetPlayerLink(playerId) {
 
 function resetP1Link() { resetPlayerLink('p1'); }
 function resetP2Link() { resetPlayerLink('p2'); }
+function resetP3Link() { resetPlayerLink('p3'); }
+
+/**
+ * Adds one player to a running season and logs every link; existing links do not change.
+ * The new player is not in games that froze before now (playsGame_). Refuses once
+ * CONFIG.PLAYER_COUNT players exist, so running it twice by mistake cannot add a spare.
+ */
+function addPlayer() {
+  assertOwner_();
+  withScriptLock_(() => {
+    const players = loadPlayers_();
+    if (players.length >= CONFIG.PLAYER_COUNT) {
+      throw new Error(`There are already ${players.length} players. Raise CONFIG.PLAYER_COUNT first to add another.`);
+    }
+    const number = players.length + 1;
+    players.push({ id: `p${number}`, token: Utilities.getUuid(), name: `Player ${number}`, joinedAtMs: now_() });
+    savePlayers_(players);
+  });
+  sync_(true);
+  printLinks();
+}
 
 /** Force a sync now, ignoring the throttle. */
 function syncNow() {

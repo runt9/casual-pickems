@@ -61,6 +61,7 @@ const CONFIG = {
     { label: 'Central Europe', tz: 'Europe/Berlin' },
   ],
 
-  PLAYER_COUNT: 2,
+  // Players setup creates on a fresh install, and the most addPlayer allows on a running one.
+  PLAYER_COUNT: 3,
   MAX_NAME_LENGTH: 20,
 };

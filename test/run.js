@@ -252,8 +252,9 @@ test('privacy: an open pick never appears in the other player\'s state or on the
   const seen = ctx.apiGetState(p2.token, 3);
   const g = seen.games.find(x => x.id === '2026_03_KC_MIA');
   const theirs = g.players.find(p => p.id === p1.id);
-  assert.deepStrictEqual(Object.keys(theirs).sort(), ['hasPick', 'id', 'visible']);
+  assert.deepStrictEqual(Object.keys(theirs).sort(), ['hasPick', 'id', 'plays', 'visible']);
   assert.strictEqual(theirs.hasPick, true);
+  assert.strictEqual(theirs.plays, true); // an open game is always one every player is in
   seen.games.filter(x => !x.frozen).forEach(x => x.players.filter(p => p.id === p1.id).forEach(p => {
     assert(!('side' in p) && !('locked' in p) && !('score' in p), 'p1 details hidden on ' + x.id);
   }));
@@ -384,13 +385,90 @@ test('historical replay (2025 regular season + playoffs) matches an independent 
   assert.strictEqual(summary.weeks.length, 22);
   assert(summary.weeks.every(w => w.complete));
   const standings = env.ss.getSheetByName('Standings').rows();
-  assert(standings.find(r => r && r[0] === 'Full season')[4].includes('champion') ||
-    standings.find(r => r && r[0] === 'Full season')[4] === 'Tie');
+  const fullSeason = standings.find(r => r && r[0] === 'Full season');
+  assert.match(fullSeason[fullSeason.length - 1], / \(champion\)$|^Tie$/);
   assert.strictEqual(env.ss.sheets.length, 23);
   // Largest stored value must stay under the per-property limit.
   const biggest = Math.max(...[...store.values()].map(v => v.length));
   assert(biggest < 9000, 'largest property ' + biggest);
   console.log('     replay totals', JSON.stringify(want), 'largest property bytes', biggest);
+});
+
+test('third player added mid-season: existing links kept, not in games frozen before joining, not a winner of earlier weeks', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; c.PLAYER_COUNT = 2; } });
+  const { ctx, clock, store } = env;
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+
+  // Friday of Week 3: Weeks 1-2 final, Thursday's Week 3 game frozen, Sunday's games open.
+  const joinMs = Date.UTC(2025, 8, 19, 12);
+  clock.now = joinMs;
+  ctx.sync_(true);
+  assert.throws(() => ctx.addPlayer(), /Raise CONFIG.PLAYER_COUNT/);
+  env.ctx.__exports.CONFIG.PLAYER_COUNT = 3;
+  ctx.addPlayer();
+  assert.throws(() => ctx.addPlayer(), /already 3 players/);
+  const players = JSON.parse(store.get('players'));
+  assert.deepStrictEqual(players.map(p => p.id), ['p1', 'p2', 'p3']);
+  assert.deepStrictEqual(players.slice(0, 2).map(p => p.token), [p1.token, p2.token], 'existing links unchanged');
+  const p3 = players[2];
+  assert.strictEqual(p3.joinedAtMs, joinMs);
+
+  const all = Object.values(ctx.loadGames_());
+  const frozenBeforeJoin = all.filter(g => ctx.freezeAtMs_(g) <= joinMs);
+  const openAtJoin = all.filter(g => ctx.freezeAtMs_(g) > joinMs);
+  assert(frozenBeforeJoin.some(g => g.week === 3) && openAtJoin.some(g => g.week === 3), 'Week 3 is split by the join');
+  openAtJoin.forEach(g => ctx.apiSetPick(p3.token, g.id, 'home'));
+  assert.throws(() => ctx.apiSetPick(p3.token, frozenBeforeJoin[0].id, 'home'), /frozen/);
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const summary = ctx.seasonSummary_(ctx.loadGames_(), ctx.loadAllPicks_(), players, clock.now);
+  const week = n => summary.weeks.find(w => w.week === n);
+
+  // Weeks 1-2 froze entirely before the join: p3 is not in them at all.
+  [1, 2].forEach(n => {
+    assert.deepStrictEqual([week(n).byPlayer.p3.played, week(n).byPlayer.p3.points, week(n).byPlayer.p3.missed], [false, 0, 0]);
+    assert(!week(n).winnerIds.includes('p3'), 'p3 cannot win week ' + n);
+    assert(week(n).winnerIds.length > 0);
+  });
+  // Week 3: p3 is in, but not in the games that froze before joining (not missed, not scored).
+  assert.strictEqual(week(3).byPlayer.p3.played, true);
+  assert.strictEqual(week(3).byPlayer.p3.missed, 0);
+  // p3 picked the same side as p1 on every game they were in, so their points differ exactly by those games.
+  const p1PointsBeforeJoin = frozenBeforeJoin.reduce((sum, g) => {
+    const view = ctx.gameView_(g, ctx.loadWeekPicks_(g.week), players, clock.now, null);
+    return sum + view.players.find(p => p.id === 'p1').score.points;
+  }, 0);
+  const totals = summary.totals;
+  assert.strictEqual(totals.p3.regular + totals.p3.playoffs, totals.p1.regular + totals.p1.playoffs - p1PointsBeforeJoin);
+  assert.strictEqual(totals.p3.missed, 0);
+
+  // Sheet: blank for p3 where they were not in the game or week.
+  const standings = env.ss.getSheetByName('Standings').rows();
+  assert.strictEqual(standings.find(r => r && r[0] === 'Week 1')[4], '');
+  const week3Rows = env.ss.getSheetByName('Week 3').rows();
+  const header = week3Rows.find(r => r && r[0] === 'Kickoff (US Central)');
+  const p3PickColumn = header.indexOf('Player 3 pick');
+  const p1PickColumn = header.indexOf('Player 1 pick');
+  const thursday = frozenBeforeJoin.find(g => g.week === 3);
+  const thursdayRow = week3Rows.find(r => r && r[2] === ctx.teamName_(thursday.away) + ' (' + thursday.away + ')');
+  assert.strictEqual(thursdayRow[p3PickColumn], '');
+  assert.strictEqual(thursdayRow[p1PickColumn], thursday.home);
+  const week1Total = env.ss.getSheetByName('Week 1').rows().find(r => r && String(r[0]).startsWith('Week total'));
+  assert.strictEqual(week1Total[header.indexOf('Player 3 pts')], '');
+
+  // Page: p3 is left out of week totals and game rows where they were not in.
+  const p1Week1 = ctx.apiGetState(p1.token, 1);
+  assert.deepStrictEqual(Array.from(p1Week1.totals, t => t.id), ['p1', 'p2']);
+  assert(p1Week1.games.every(g => g.players.find(p => p.id === 'p3').plays === false));
+  const p3Week3 = ctx.apiGetState(p3.token, 3);
+  assert.deepStrictEqual(Array.from(p3Week3.totals, t => t.id), ['p1', 'p2', 'p3']);
+  assert.strictEqual(p3Week3.games.find(g => g.id === thursday.id).players.find(p => p.id === 'p3').plays, false);
 });
 
 // ---------------------------------------------------------------- security and input handling
@@ -484,24 +562,28 @@ test('standings name regular-season and full-season champions; the playoffs row 
   });
   const leaderCells = () => {
     const standings = env.ss.getSheetByName('Standings').rows();
-    return ['Regular season', 'Playoffs', 'Full season'].map(label => standings.find(r => r && r[0] === label).slice(1, 5));
+    // [status, leader]: leader is the last column, after one points column per player.
+    return ['Regular season', 'Playoffs', 'Full season'].map(label => {
+      const row = standings.find(r => r && r[0] === label);
+      return [row[1], row[row.length - 1]];
+    });
   };
 
   clock.now = Date.UTC(2026, 0, 18, 20); // Divisional weekend: regular season final, playoffs under way
   ctx.sync_(true);
   const [regular, playoffs, full] = leaderCells();
   assert.strictEqual(regular[0], 'Final');
-  assert.match(regular[3], / \(champion\)$|^Tie$/);
-  assert.deepStrictEqual([playoffs[0], playoffs[3]], ['In progress', '']);
+  assert.match(regular[1], / \(champion\)$|^Tie$/);
+  assert.deepStrictEqual(playoffs, ['In progress', '']);
   assert.strictEqual(full[0], 'In progress');
-  assert.match(full[3], / \(leading\)$|^Tied$/);
+  assert.match(full[1], / \(leading\)$|^Tied$/);
 
   clock.now = Date.UTC(2026, 2, 1);
   ctx.sync_(true);
   const [, finalPlayoffs, finalFull] = leaderCells();
-  assert.deepStrictEqual([finalPlayoffs[0], finalPlayoffs[3]], ['Final', '']);
+  assert.deepStrictEqual(finalPlayoffs, ['Final', '']);
   assert.strictEqual(finalFull[0], 'Final');
-  assert.match(finalFull[3], / \(champion\)$|^Tie$/);
+  assert.match(finalFull[1], / \(champion\)$|^Tie$/);
 });
 
 test('a voided game does not block week completion or champions', () => {
@@ -521,8 +603,8 @@ test('only intended functions are publicly callable (no trailing underscore)', (
   const { ctx } = load();
   const pub = Object.keys(ctx).filter(k => typeof ctx[k] === 'function' && !k.endsWith('_') &&
     !['console'].includes(k) && !/^[A-Z]/.test(k)).sort();
-  assert.deepStrictEqual(pub, ['apiGetState', 'apiSetLock', 'apiSetName', 'apiSetPick', 'doGet', 'printLinks',
-    'resetP1Link', 'resetP2Link', 'resetPlayerLink', 'setup', 'syncNow', 'syncTrigger'].sort());
+  assert.deepStrictEqual(pub, ['addPlayer', 'apiGetState', 'apiSetLock', 'apiSetName', 'apiSetPick', 'doGet', 'printLinks',
+    'resetP1Link', 'resetP2Link', 'resetP3Link', 'resetPlayerLink', 'setup', 'syncNow', 'syncTrigger'].sort());
 });
 
 test('owner-only functions also refuse a different signed-in account', () => {

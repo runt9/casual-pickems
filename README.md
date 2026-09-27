@@ -1,6 +1,6 @@
 # NFL Pick'em (Google Sheets + Apps Script)
 
-Two-player blind pick'em. Picks and lines freeze 1 hour before each kickoff; points are scored
+Blind pick'em for a small group (`CONFIG.PLAYER_COUNT`, currently 3). Picks and lines freeze 1 hour before each kickoff; points are scored
 against the frozen line with the half-point model in `src/Config.js`. The shared sheet is a
 read-only view; picks live in Script Properties and only appear on the sheet once frozen.
 
@@ -18,7 +18,7 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 | `src/Sync.js` | 15-minute trigger: fetch, freeze, save, render |
 | `src/Render.js` | Standings tab and week tabs |
 | `src/WebApp.js` | `doGet` and the `api*` functions the pick page calls |
-| `src/Setup.js` | Owner-only: `setup`, `printLinks`, `resetP1Link`/`resetP2Link`, `syncNow` |
+| `src/Setup.js` | Owner-only: `setup`, `addPlayer`, `printLinks`, `resetP1Link`/`resetP2Link`/`resetP3Link`, `syncNow` |
 | `src/Index.html` | Pick page layout; pulls in the two files below with `include_()` |
 | `src/Styles.html` | Pick page CSS |
 | `src/Client.html` | Pick page JavaScript (runs in the browser; calls the `api*` functions) |
@@ -50,10 +50,10 @@ minute), and the Setup.js functions, which reject any caller who is not the owne
    Authorize when asked. Google will warn that the app is unverified; this is expected for a
    personal script (Advanced > Go to project). Copy the web app URL ending in `/exec`.
 5. **Project Settings > Script Properties > Add:** `WEB_APP_URL` = that URL.
-6. In the editor, select `setup` and **Run**. It creates both players, installs the 15-minute
-   trigger, runs the first sync, and prints both personal links in the execution log
-   (p1 = you, p2 = your friend).
-7. Share the spreadsheet with your friend as **Viewer** (not Editor). Send them the p2 link
+6. In the editor, select `setup` and **Run**. It creates `CONFIG.PLAYER_COUNT` players, installs
+   the 15-minute trigger, runs the first sync, and prints every personal link in the execution log
+   (p1 = you, p2, p3 = your friends).
+7. Share the spreadsheet with your friends as **Viewer** (not Editor). Send each their own link
    privately. The link is their login: anyone with it can pick as them.
 8. Each of you opens your link and uses "Change name".
 
@@ -62,14 +62,17 @@ The default `Sheet1` tab can be deleted.
 ## Operating notes
 
 - **Code changes** only reach the pick page after **Deploy > Manage deployments > Edit > Version: New version**. The URL stays the same.
-- **Lost or leaked link:** run `resetP2Link` (or `resetP1Link`); the old link stops working; the new one is printed in the log.
+- **Lost or leaked link:** run `resetP1Link`, `resetP2Link` or `resetP3Link`; the old link stops working; the new one is printed in the log.
+- **Adding a player mid-season:** make sure `CONFIG.PLAYER_COUNT` allows one more, deploy, then run
+  `addPlayer`. It creates the next player (e.g. p3), syncs, and prints every link; existing links do not
+  change. It refuses once `CONFIG.PLAYER_COUNT` players exist, so a second run cannot add a spare.
 - **Force a refresh** of the sheet: run `syncNow`.
 - **Sheet lag:** picks save instantly, but the sheet (including the "picked" markers) refreshes every 15 minutes.
 - **Sheet redraws** only touch tabs whose content changed, and never reorder tabs, so hiding or
   moving tabs by hand sticks. Text cells are written as plain text so Sheets does not turn values
   like "2-1" into dates. Manual edits to a tab are overwritten the next time its content changes.
 - **Sync throttle:** at most one sync per minute, counting failed attempts.
-- **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friend cannot.
+- **Stored data:** Script Properties (Project Settings) hold all picks. You can read them there; your friends cannot.
 
 ## Rules as implemented
 
@@ -89,9 +92,12 @@ The default `Sheet1` tab can be deleted.
 - Playoff multipliers: Wild Card x2, Divisional x3, Conference x4, Super Bowl x6.
 - Ties score 0 (locked or not). Missed picks score 0.
 - Underdog win value is capped at 20 before the lock or playoff multiplier.
-- Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for both.
+- Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for p1 and p2.
 - Weekly and season ties are recorded as ties.
-- Champions: regular season, and full season including playoffs. The Standings tab's Playoffs
+- Champions: regular season, and full season including playoffs.
+- A player added mid-season is not in games that froze before they were added: those are not
+  missed or scored for them, show blank on the sheet, and a week that froze entirely before they
+  joined leaves them out of that week's winner. The Standings tab's Playoffs
   row shows points only.
 
 ## Tests

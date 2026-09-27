@@ -19,9 +19,10 @@
  */
 
 /**
- * One player's part of a GameView. A hidden entry has only id, visible and hasPick.
+ * One player's part of a GameView. A hidden entry has only id, plays, visible and hasPick.
  * @typedef {Object} PlayerGameView
  * @property {string} id
+ * @property {boolean} plays        false for a game that froze before this player joined (playsGame_)
  * @property {boolean} visible      false while the game is open, for everyone but the viewer
  * @property {boolean} hasPick
  * @property {?string} [side]       a Side, or null for no pick
@@ -56,12 +57,14 @@
  * @property {number} missed
  * @property {number} upsets
  * @property {?{gameId: string, status: string, points: ?number}} lock   the locked pick once frozen
+ * @property {boolean} played     in at least one of the week's games (playsGame_)
  */
 
 /**
  * @typedef {Object} WeekSummary
  * @property {boolean} complete                            every game frozen and final
- * @property {Array<string>} winnerIds                     top scorers once complete; more than one is a tie
+ * @property {Array<string>} winnerIds                     top scorers among players who played, once complete;
+ *                                                         more than one is a tie
  * @property {Object<string, PlayerWeekTotals>} byPlayer   playerId -> totals
  */
 
@@ -139,15 +142,19 @@ function gameView_(game, weekPicks, players, nowMs, viewerId) {
   const snap = game.snap;
 
   const playerView = (player) => {
+    // playsGame_ is false only for games already frozen, so skipping the visibility check reveals nothing.
+    if (!playsGame_(player, game)) {
+      return { id: player.id, plays: false, visible: true, hasPick: false, side: null, locked: false, score: null };
+    }
     const mine = weekPicks[player.id] || emptyPlayerPicks_();
     const side = mine.picks[game.id] || null;
     const hasPick = side !== null;
     const isViewer = player.id === viewerId;
-    if (!frozen && !isViewer) return { id: player.id, visible: false, hasPick };
+    if (!frozen && !isViewer) return { id: player.id, plays: true, visible: false, hasPick };
 
     const locked = mine.lock === game.id;
     const score = snap ? scorePick_({ side, snap, result: game.result, gameType: game.type, locked }) : null;
-    return { id: player.id, visible: true, hasPick, side, locked, score };
+    return { id: player.id, plays: true, visible: true, hasPick, side, locked, score };
   };
 
   return {
@@ -176,7 +183,8 @@ function gameView_(game, weekPicks, players, nowMs, viewerId) {
 function weekSummary_(gamesOfWeek, weekPicks, players, nowMs) {
   const byPlayer = {};
   players.forEach((player) => {
-    byPlayer[player.id] = { points: 0, wins: 0, losses: 0, ties: 0, pending: 0, missed: 0, upsets: 0, lock: null };
+    const played = gamesOfWeek.some((game) => playsGame_(player, game));
+    byPlayer[player.id] = { points: 0, wins: 0, losses: 0, ties: 0, pending: 0, missed: 0, upsets: 0, lock: null, played };
   });
   const counterByStatus = {
     [ScoreStatus.WIN]: 'wins',
@@ -203,10 +211,12 @@ function weekSummary_(gamesOfWeek, weekPicks, players, nowMs) {
   const complete = gamesOfWeek.length > 0 && gamesOfWeek.every(isDone);
   let winnerIds = [];
   if (complete) {
+    // A player who joined after the whole week froze is not in it, so cannot win it with 0.
+    const contenders = players.filter((player) => byPlayer[player.id].played);
     const pointsOf = (player) => byPlayer[player.id].points;
-    const allPoints = players.map(pointsOf);
+    const allPoints = contenders.map(pointsOf);
     const topPoints = Math.max(...allPoints);
-    winnerIds = players.filter((player) => pointsOf(player) === topPoints).map((player) => player.id);
+    winnerIds = contenders.filter((player) => pointsOf(player) === topPoints).map((player) => player.id);
   }
   return { complete, winnerIds, byPlayer };
 }

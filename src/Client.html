@@ -290,7 +290,7 @@
       createElement('div', { class: 'game-meta' },
         createElement('span', {}, `Line: ${formatLine(game)}`),
         valuesText ? createElement('span', {}, valuesText) : null),
-      game.players.map((player) => buildPlayerResultRow(game, player)));
+      game.players.filter((player) => player.plays).map((player) => buildPlayerResultRow(game, player)));
   }
 
   /** "ATL 35 - 14 GB", "In progress", or "Frozen, kicks off Sun, Sep 27, 12:00 PM". */

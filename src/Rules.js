@@ -20,6 +20,19 @@ function isFrozen_(game, nowMs) {
   return nowMs >= freezeAtMs;
 }
 
+/**
+ * Whether a player takes part in a game. A player added mid-season (addPlayer) is not in the
+ * games that froze before they joined: those are neither missed nor scored for them.
+ * @param {Player} player
+ * @param {Game} game
+ */
+function playsGame_(player, game) {
+  if (!player.joinedAtMs) return true;
+  const freezeAtMs = freezeAtMs_(game);
+  if (freezeAtMs === null) return true;
+  return freezeAtMs > player.joinedAtMs;
+}
+
 /** @return {PlayerPicks} */
 function emptyPlayerPicks_() {
   return { picks: {}, lock: null };

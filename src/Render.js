@@ -117,6 +117,12 @@ function winnerText_(winnerIds, nameById) {
   return 'Tie';
 }
 
+/** A player's week total, or blank for a week they were not in (joined after it froze). */
+function weekPointsCell_(week, player) {
+  const totals = week.byPlayer[player.id];
+  return totals.played ? totals.points : '';
+}
+
 /** "Sun Sep 27, 12:00 PM", or "TBD" while kickoff is unknown. */
 function fmtTime_(ms, tz) {
   if (ms === null || ms === undefined) return 'TBD';
@@ -188,7 +194,7 @@ function standingsLayout_(season, players, nowMs) {
   rows.push(['Week', 'Status', ...names, 'Winner']);
   season.weeks.filter(hasFrozenGame).forEach((week) => {
     pointsRows.push(nextRow());
-    const points = players.map((player) => week.byPlayer[player.id].points);
+    const points = players.map((player) => weekPointsCell_(week, player));
     const winner = week.complete ? winnerText_(week.winnerIds, nameById) : '';
     rows.push([week.label, week.complete ? 'Final' : 'In progress', ...points, winner]);
   });
@@ -253,7 +259,8 @@ function standingsLayout_(season, players, nowMs) {
  *   Line                       GB -4.5
  *   Favorite win / loss        W +4 / L -1.5
  *   Underdog win / loss        W +6.5 / L -1
- *   Al pick, Bob pick          GB (LOCK) | ATL | no pick | picked (open game, others' view) | "" (no pick yet)
+ *   Al pick, Bob pick          GB (LOCK) | ATL | no pick | picked (open game, others' view) | "" (no pick yet, or
+ *                              the game froze before this player joined)
  *   Final                      ATL 35 - 14 GB
  *   Al pts, Bob pts            -3 | 6.5   (only once final)
  *
@@ -301,6 +308,7 @@ function weekLayout_(week, gamesOfWeek, weekPicks, players, nowMs) {
   };
   const winLossText = (win, loss) => `W ${fmtPts_(win)} / L ${fmtPts_(loss)}`;
   const pickText = (game, playerView) => {
+    if (!playerView.plays) return '';
     if (!playerView.visible) return playerView.hasPick ? 'picked' : '';
     if (!playerView.side) return 'no pick';
     const team = playerView.side === Side.HOME ? game.home : game.away;
@@ -334,7 +342,7 @@ function weekLayout_(week, gamesOfWeek, weekPicks, players, nowMs) {
   const totalRow = nextRow();
   const totalCells = new Array(width).fill('');
   totalCells[0] = week.complete ? 'Week total (final)' : 'Week total so far';
-  players.forEach((player, index) => { totalCells[firstPointsColumn - 1 + index] = week.byPlayer[player.id].points; });
+  players.forEach((player, index) => { totalCells[firstPointsColumn - 1 + index] = weekPointsCell_(week, player); });
   rows.push(totalCells);
   if (week.complete) rows.push([`Winner: ${winnerText_(week.winnerIds, nameById)}`]);
 

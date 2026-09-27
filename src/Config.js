@@ -26,6 +26,8 @@ const CONFIG = {
 
   LOCK_MULTIPLIER: 2,
   // nflverse game_type -> round multiplier and whether a lock may be used.
+  // Keys are GameType values (Constants.js), written out because top-level code here cannot
+  // rely on another file having loaded.
   ROUNDS: {
     REG: { label: 'Week', multiplier: 1, locks: true },
     WC:  { label: 'Wild Card', multiplier: 2, locks: false },

@@ -63,7 +63,7 @@ window.google = { script: { get run() {
   assert.strictEqual(await page.locator('.team-button').count(), 30, '15 open games x 2 teams');
   assert.strictEqual(await page.locator('.no-lock-banner').count(), 1, 'no-lock banner before a lock');
   const billsCard = page.locator('.game-card', { hasText: 'Bills (BUF)' });
-  assert(await billsCard.textContent().then((t) => t.includes('Bunte has picked')));
+  assert(!(await page.textContent('#week-content')).includes('has picked'), 'pick page does not show other players\' pick status');
 
   await page.click('text=@ Bills (BUF)');
   await page.waitForSelector('.team-button[aria-pressed="true"]');
@@ -81,6 +81,12 @@ window.google = { script: { get run() {
   await page.waitForSelector('.lock-button[aria-pressed="true"]');
   await page.screenshot({ path: path.join(__dirname, 'ui_open.png') });
   assert.deepStrictEqual(page.errors, []);
+
+  // Changing the week through the dropdown loads that week.
+  await page.selectOption('#week-select', '4');
+  await page.waitForFunction(() => document.querySelector('#week-select').value === '4' && !document.body.textContent.includes('Falcons @ Packers'));
+  await page.selectOption('#week-select', '3');
+  await page.waitForSelector('text=Falcons @ Packers');
 
   // Frozen week: lines, point values, and both picks visible; no team buttons.
   env.clock.now = Date.UTC(2026, 8, 27, 20, 30);

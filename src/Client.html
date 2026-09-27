@@ -182,12 +182,6 @@
     const options = weekState.weeks.map((week) =>
       createElement('option', { value: week.week, selected: week.week === weekState.week }, week.label));
     document.getElementById('week-select').replaceChildren(...options);
-
-    const index = weekState.weeks.findIndex((week) => week.week === weekState.week);
-    const isFirst = index <= 0;
-    const isLast = index < 0 || index >= weekState.weeks.length - 1;
-    document.getElementById('previous-week').disabled = isFirst;
-    document.getElementById('next-week').disabled = isLast;
   }
 
   function renderWeekContent() {
@@ -237,10 +231,9 @@
     return createElement('div', { class: 'week-totals' }, totals, outcome);
   }
 
-  /** Before freeze: two team buttons, the lock toggle, and whether the other player has picked. */
+  /** Before freeze: two team buttons and the lock toggle. */
   function buildOpenGameCard(game) {
     const myPick = game.players.find((player) => player.id === weekState.me.id);
-    const otherPlayers = game.players.filter((player) => player.id !== weekState.me.id);
 
     const teamButton = (side, label) => {
       const isChosen = myPick.side === side;
@@ -257,9 +250,6 @@
     const closesText = game.freezeAtMs === null
       ? 'Kickoff TBD'
       : `Closes in ${formatTimeLeft(game.freezeAtMs - serverNowMs())}`;
-    const otherStatus = otherPlayers
-      .map((player) => `${playerLabel(player.id)} ${player.hasPick ? 'has picked' : 'has not picked'}`)
-      .join(', ');
 
     return createElement('div', { class: 'game-card' },
       createElement('div', { class: 'game-meta' },
@@ -269,7 +259,6 @@
         teamButton(Side.AWAY, `${game.awayName} (${game.away})`),
         teamButton(Side.HOME, `@ ${game.homeName} (${game.home})`)),
       createElement('div', { class: 'game-actions' },
-        createElement('span', { class: 'muted' }, otherStatus),
         buildLockButton(game, myPick)));
   }
 
@@ -341,25 +330,31 @@
     }
   }
 
-  // --------------------------------------------------------------- events and timers
+  // --------------------------------------------------------------- startup
 
-  function stepWeek(direction) {
-    const index = weekState.weeks.findIndex((week) => week.week === weekState.week);
-    const target = weekState.weeks[index + direction];
-    if (target) loadWeek(target.week);
+  /**
+   * Runs once. This script sits at the end of <body>, so the static elements it wires up
+   * already exist. Those elements are never replaced by a render (renders only replace the
+   * select's options and the contents of #week-content), so their listeners stay attached.
+   * Game-card buttons are rebuilt on every render and get their listeners in createElement.
+   */
+  function initializePage() {
+    document.getElementById('week-select').addEventListener('change', (event) => loadWeek(Number(event.target.value)));
+    document.getElementById('rename-toggle').addEventListener('click', toggleRenameForm);
+    document.getElementById('rename-form').addEventListener('submit', submitRename);
+    document.addEventListener('visibilitychange', reloadWhenPageShown);
+    setInterval(redrawOrReloadOnFreeze, REDRAW_INTERVAL_MS);
+    setInterval(periodicReload, RELOAD_INTERVAL_MS);
+    loadWeek(null);
   }
 
-  document.getElementById('week-select').addEventListener('change', (event) => loadWeek(Number(event.target.value)));
-  document.getElementById('previous-week').addEventListener('click', () => stepWeek(-1));
-  document.getElementById('next-week').addEventListener('click', () => stepWeek(1));
-
-  document.getElementById('rename-toggle').addEventListener('click', () => {
+  function toggleRenameForm() {
     const form = document.getElementById('rename-form');
     form.hidden = !form.hidden;
     document.getElementById('rename-input').value = weekState ? weekState.me.name : '';
-  });
+  }
 
-  document.getElementById('rename-form').addEventListener('submit', async (event) => {
+  async function submitRename(event) {
     event.preventDefault();
     const newName = document.getElementById('rename-input').value;
     try {
@@ -369,17 +364,17 @@
     } catch (error) {
       showToast(errorMessage(error));
     }
-  });
+  }
 
-  document.addEventListener('visibilitychange', () => {
+  function reloadWhenPageShown() {
     if (document.hidden) return;
     if (requestInFlight) return;
     reloadCurrentWeek();
-  });
+  }
 
-  // Redraw countdowns; reload instead when a game has crossed its freeze time, so the other
-  // player's pick and the line come from the server.
-  setInterval(() => {
+  /** Redraws countdowns; reloads instead when a game has crossed its freeze time, so the
+   *  other players' picks and the line come from the server. */
+  function redrawOrReloadOnFreeze() {
     if (requestInFlight) return;
     if (!weekState) return;
     const crossedFreeze = weekState.games.some((game) => !game.frozen && isFrozenNow(game));
@@ -388,13 +383,13 @@
     } else {
       renderPage();
     }
-  }, REDRAW_INTERVAL_MS);
+  }
 
-  setInterval(() => {
+  function periodicReload() {
     if (requestInFlight) return;
     if (document.hidden) return;
     reloadCurrentWeek();
-  }, RELOAD_INTERVAL_MS);
+  }
 
-  loadWeek(null);
+  initializePage();
 </script>

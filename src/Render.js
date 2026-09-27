@@ -148,7 +148,7 @@ function lineText_(game, line) {
  *
  *   Season                         Al      Bob
  *   Regular season   In progress   30.5    -9      Al (leading)
- *   Playoffs         In progress   0       0       Tied
+ *   Playoffs         In progress   0       0
  *   Full season      In progress   30.5    -9      Al (leading)
  *
  *   Stats                          Al      Bob
@@ -206,17 +206,19 @@ function standingsLayout_(season, players, nowMs) {
     if (leaders.length > 1) return final ? 'Tie' : 'Tied';
     return `${nameById[leaders[0].id]} ${final ? '(champion)' : '(leading)'}`;
   };
+  // The rules name two champions, regular season and full season; the playoffs alone have none.
   const seasonParts = [
-    { label: 'Regular season', totalKey: 'regular', final: regularFinal },
-    { label: 'Playoffs', totalKey: 'playoffs', final: fullFinal },
-    { label: 'Full season', totalKey: 'full', final: fullFinal },
+    { label: 'Regular season', totalKey: 'regular', final: regularFinal, hasChampion: true },
+    { label: 'Playoffs', totalKey: 'playoffs', final: fullFinal, hasChampion: false },
+    { label: 'Full season', totalKey: 'full', final: fullFinal, hasChampion: true },
   ];
   headerRows.push(nextRow());
   rows.push(['Season', '', ...names, '']);
-  seasonParts.forEach(({ label, totalKey, final }) => {
+  seasonParts.forEach(({ label, totalKey, final, hasChampion }) => {
     pointsRows.push(nextRow());
     const points = players.map((player) => season.totals[player.id][totalKey]);
-    rows.push([label, final ? 'Final' : 'In progress', ...points, leaderText(totalKey, final)]);
+    const leader = hasChampion ? leaderText(totalKey, final) : '';
+    rows.push([label, final ? 'Final' : 'In progress', ...points, leader]);
   });
   rows.push(['']);
 

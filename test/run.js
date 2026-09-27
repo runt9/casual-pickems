@@ -463,6 +463,37 @@ test('cancelled game (missing from a full download) is voided and excluded; reap
   assert(ctx.apiGetState(p1.token, 3).games.some(g => g.id === gone));
 });
 
+test('standings name regular-season and full-season champions; the playoffs row never names a leader', () => {
+  const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
+  const { ctx, clock, store } = env;
+  ctx.setup();
+  const [p1, p2] = JSON.parse(store.get('players'));
+  Object.values(ctx.loadGames_()).forEach(g => {
+    ctx.apiSetPick(p1.token, g.id, 'home');
+    ctx.apiSetPick(p2.token, g.id, 'away');
+  });
+  const leaderCells = () => {
+    const standings = env.ss.getSheetByName('Standings').rows();
+    return ['Regular season', 'Playoffs', 'Full season'].map(label => standings.find(r => r && r[0] === label).slice(1, 5));
+  };
+
+  clock.now = Date.UTC(2026, 0, 18, 20); // Divisional weekend: regular season final, playoffs under way
+  ctx.sync_(true);
+  const [regular, playoffs, full] = leaderCells();
+  assert.strictEqual(regular[0], 'Final');
+  assert.match(regular[3], / \(champion\)$|^Tie$/);
+  assert.deepStrictEqual([playoffs[0], playoffs[3]], ['In progress', '']);
+  assert.strictEqual(full[0], 'In progress');
+  assert.match(full[3], / \(leading\)$|^Tied$/);
+
+  clock.now = Date.UTC(2026, 2, 1);
+  ctx.sync_(true);
+  const [, finalPlayoffs, finalFull] = leaderCells();
+  assert.deepStrictEqual([finalPlayoffs[0], finalPlayoffs[3]], ['Final', '']);
+  assert.strictEqual(finalFull[0], 'Final');
+  assert.match(finalFull[3], / \(champion\)$|^Tie$/);
+});
+
 test('a voided game does not block week completion or champions', () => {
   const env = load({ now: Date.UTC(2025, 7, 1), csv: REAL_CSV, config: c => { c.SEASON = 2025; c.START_WEEK = 1; } });
   env.ctx.setup();

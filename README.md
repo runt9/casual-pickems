@@ -91,6 +91,8 @@ The default `Sheet1` tab can be deleted.
 - Underdog win value is capped at 20 before the lock or playoff multiplier.
 - Season starts at Week 3; the Thursday Week 3 game had already frozen, so it scores 0 for both.
 - Weekly and season ties are recorded as ties.
+- Champions: regular season, and full season including playoffs. The Standings tab's Playoffs
+  row shows points only.
 
 ## Tests
 

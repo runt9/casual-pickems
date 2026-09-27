@@ -96,7 +96,10 @@ function loadGames_() {
   const games = {};
   Object.entries(props_().getProperties())
     .filter(([key]) => key.startsWith(PropertyKey.GAMES_PREFIX))
-    .forEach(([, json]) => Object.assign(games, JSON.parse(json)));
+    .forEach(([, json]) => {
+      const weekGames = JSON.parse(json);
+      Object.assign(games, weekGames);
+    });
   return games;
 }
 

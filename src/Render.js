@@ -286,7 +286,7 @@ function weekLayout_(week, gamesOfWeek, weekPicks, players, nowMs) {
 
   const roundNote = round.multiplier > 1
     ? `Round multiplier x${round.multiplier}, no locks`
-    : 'Lock doubles one pick. Picks and lines appear 1 hour before each kickoff.';
+    : `Lock doubles one pick. Picks and lines appear ${CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF} minutes before each kickoff.`;
   rows.push([`${week.label} ${CONFIG.SEASON}`]);
   rows.push([roundNote]);
   rows.push(['']);

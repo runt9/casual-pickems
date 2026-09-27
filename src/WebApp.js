@@ -18,6 +18,7 @@
  * @property {string} label
  * @property {number} multiplier                       round multiplier
  * @property {boolean} locksAllowed
+ * @property {number} freezeMinutesBeforeKickoff       CONFIG value, for the page's rules note
  * @property {?string} myLock                          gameId of this player's lock
  * @property {Array<GameView>} games                   each also has awayName and homeName (team nicknames)
  * @property {Array<{id: string, name: string, points: number}>} totals   frozen games only
@@ -197,6 +198,7 @@ function buildState_(player, games, week, nowMs) {
     label: shownWeek ? shownWeek.label : '',
     multiplier: round ? round.multiplier : 1,
     locksAllowed: round ? round.locks : false,
+    freezeMinutesBeforeKickoff: CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF,
     myLock: mine.lock,
     games: gamesOfWeek.map(gameForPage),
     totals: players.map(({ id, name }) => ({ id, name, points: summary.byPlayer[id].points })),

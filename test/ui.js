@@ -62,6 +62,7 @@ window.google = { script: { get run() {
   assert.strictEqual(await page.locator('.game-card').count(), 16);
   assert.strictEqual(await page.locator('.team-button').count(), 30, '15 open games x 2 teams');
   assert.strictEqual(await page.locator('.no-lock-banner').count(), 1, 'no-lock banner before a lock');
+  assert((await page.textContent('.rules-note')).includes('each game freezes, 60 minutes before kickoff.'), 'rules note shows the freeze offset');
   const billsCard = page.locator('.game-card', { hasText: 'Bills (BUF)' });
   assert(!(await page.textContent('#week-content')).includes('has picked'), 'pick page does not show other players\' pick status');
 

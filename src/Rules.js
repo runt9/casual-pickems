@@ -34,7 +34,9 @@ function emptyPlayerPicks_() {
 function applyPick_(game, mine, side, nowMs) {
   const allowedSides = [Side.HOME, Side.AWAY, null];
   if (!allowedSides.includes(side)) throw new Error('Invalid side.');
-  if (isFrozen_(game, nowMs)) throw new Error('This game is frozen. Picks closed 1 hour before kickoff.');
+  if (isFrozen_(game, nowMs)) {
+    throw new Error(`This game is frozen. Picks closed ${CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF} minutes before kickoff.`);
+  }
 
   if (side === null) {
     delete mine.picks[game.id];

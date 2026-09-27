@@ -70,10 +70,11 @@ git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
 default; set `GAMES_CSV` to use a different copy. `ui.js` loads Playwright from the global npm
 root (`npm i -g playwright`).
 
+From the repo root (the GitHub Action allows exactly `node test/run.js`):
+
 ```
-cd test
-node run.js   # unit + end-to-end on fake Google services
-node ui.js    # pick page in headless Chromium
+node test/run.js   # unit + end-to-end on fake Google services
+node test/ui.js    # pick page in headless Chromium
 ```
 
 Both must pass before a PR. Write tests from the rules above, not from what the code currently

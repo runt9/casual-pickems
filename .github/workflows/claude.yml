@@ -26,25 +26,23 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
+
+      # The tests read nflverse games.csv from ../nflverse/nfldata (see CLAUDE.md, Testing).
+      - name: Get test data
+        run: git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
 
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-
-          # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
-
-          # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
-          # prompt: 'Update the pull request description to include a summary of changes.'
-
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
-
+          # Public repo: only the owner's comments reach Claude's prompt, so text written by
+          # anyone else on a thread cannot steer it.
+          include_comments_by_actor: runt9
+          # Bash is off by default; allow only the unit and end-to-end tests.
+          claude_args: '--allowedTools "Bash(node test/run.js)"'

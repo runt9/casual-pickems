@@ -8,10 +8,10 @@
 <script>
   // --------------------------------------------------------------- constants
 
-  /** Must match the side values the server stores ('home' / 'away'). */
+  /** Must match Side in Constants.js. */
   const Side = Object.freeze({ HOME: 'home', AWAY: 'away' });
 
-  /** Must match scorePick_ statuses in Scoring.js. */
+  /** Must match ScoreStatus in Constants.js. */
   const ScoreStatus = Object.freeze({ NO_PICK: 'nopick', PENDING: 'pending', TIE: 'tie', WIN: 'win', LOSS: 'loss' });
 
   const REDRAW_INTERVAL_MS = 30 * 1000;       // countdowns, and noticing a game has frozen

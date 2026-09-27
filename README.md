@@ -8,6 +8,7 @@ read-only view; picks live in Script Properties and only appear on the sheet onc
 
 | File | Purpose |
 |---|---|
+| `src/Constants.js` | Closed sets of stored values: sides, score statuses, game types, line sources |
 | `src/Config.js` | Every rule value: season, start week, freeze offset, multipliers, scoring constants, timezones |
 | `src/Scoring.js` | Point values from a spread; scoring one pick (pure) |
 | `src/Rules.js` | Freeze time, pick and lock validation (pure) |

@@ -29,6 +29,7 @@ it over.
 | Concern | Where |
 |---|---|
 | Every tunable value | `src/Config.js` |
+| Closed sets of stored values (sides, score statuses, game types, line sources) | `src/Constants.js` |
 | Point values and scoring one pick | `src/Scoring.js` |
 | Freeze time, pick and lock validation | `src/Rules.js` |
 | Parsing nflverse, freezing, line snapshot, voiding cancelled games | `src/Schedule.js` |

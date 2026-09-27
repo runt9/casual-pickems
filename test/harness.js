@@ -6,7 +6,7 @@ const vm = require('vm');
 const crypto = require('crypto');
 
 const SRC = path.join(__dirname, '..', 'src');
-const FILES = ['Config.js', 'Scoring.js', 'Rules.js', 'Schedule.js', 'Store.js', 'Teams.js', 'Model.js',
+const FILES = ['Constants.js', 'Config.js', 'Scoring.js', 'Rules.js', 'Schedule.js', 'Store.js', 'Teams.js', 'Model.js',
   'Sync.js', 'Render.js', 'WebApp.js', 'Setup.js'];
 
 function tzOffsetMs(ms, tz) {

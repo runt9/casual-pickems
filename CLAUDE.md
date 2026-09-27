@@ -59,10 +59,21 @@ Apps Script specifics that are easy to get wrong:
 
 ## Testing
 
+The tests read nflverse `games.csv`, which is not in this repo. From the repo root, once per
+fresh checkout:
+
+```
+git clone --depth 1 https://github.com/nflverse/nfldata ../nflverse/nfldata
+```
+
+`run.js` and `ui.js` read `../nflverse/nfldata/data/games.csv` (relative to the repo root) by
+default; set `GAMES_CSV` to use a different copy. `ui.js` loads Playwright from the global npm
+root (`npm i -g playwright`).
+
 ```
 cd test
-GAMES_CSV=/path/to/games.csv node run.js   # unit + end-to-end on fake Google services
-GAMES_CSV=/path/to/games.csv node ui.js    # pick page in headless Chromium (needs Playwright)
+node run.js   # unit + end-to-end on fake Google services
+node ui.js    # pick page in headless Chromium
 ```
 
 Both must pass before a PR. Write tests from the rules above, not from what the code currently

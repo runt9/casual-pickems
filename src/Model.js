@@ -204,7 +204,8 @@ function weekSummary_(gamesOfWeek, weekPicks, players, nowMs) {
   let winnerIds = [];
   if (complete) {
     const pointsOf = (player) => byPlayer[player.id].points;
-    const topPoints = Math.max(...players.map(pointsOf));
+    const allPoints = players.map(pointsOf);
+    const topPoints = Math.max(...allPoints);
     winnerIds = players.filter((player) => pointsOf(player) === topPoints).map((player) => player.id);
   }
   return { complete, winnerIds, byPlayer };

@@ -234,6 +234,16 @@ test('sheet times: kickoff in both sheet timezones and the freeze time, in the r
   assert.strictEqual(early[4], 'Open until Sun Sep 27, 11:00 AM');
 });
 
+test('the freeze offset in user-facing text follows CONFIG.FREEZE_MINUTES_BEFORE_KICKOFF', () => {
+  const env = load({ now: SAT, csv: REAL_CSV, config: c => { c.FREEZE_MINUTES_BEFORE_KICKOFF = 90; } });
+  env.ctx.setup();
+  const [p1] = JSON.parse(env.store.get('players'));
+  assert.strictEqual(env.ctx.apiGetState(p1.token, 3).freezeMinutesBeforeKickoff, 90);
+  assert.throws(() => env.ctx.apiSetPick(p1.token, '2026_03_ATL_GB', 'home'), /Picks closed 90 minutes before kickoff/);
+  const note = env.ss.getSheetByName('Week 3').rows()[1][0];
+  assert(note.includes('Picks and lines appear 90 minutes before each kickoff.'), note);
+});
+
 test('privacy: an open pick never appears in the other player\'s state or on the sheet', () => {
   const env = setupEnv(SAT);
   const { ctx, p1, p2 } = env;

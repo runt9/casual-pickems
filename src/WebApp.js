@@ -25,8 +25,9 @@
  * @property {Array<string>} winnerIds
  */
 
-function doGet(e) {
-  const token = e && e.parameter ? e.parameter.t : undefined;
+/** @param {Object} request  Apps Script's doGet event; the player's token is the `t` query parameter */
+function doGet(request) {
+  const token = request && request.parameter ? request.parameter.t : undefined;
   const player = playerByToken_(token);
   if (!player) {
     return HtmlService.createHtmlOutput('<p style="font-family:sans-serif">This pick link is not valid.</p>')
